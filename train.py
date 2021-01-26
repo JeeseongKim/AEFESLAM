@@ -28,11 +28,11 @@ from torch.utils.data import TensorDataset, DataLoader
 import visdom
 vis = visdom.Visdom()
 
-plot_all = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='All Loss'))
-plot_recon = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Reconstruction Loss'))
-plot_sep = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Separation Loss'))
-plot_conc = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Concentration Loss'))
-plot_transf = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation Loss'))
+#plot_all = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='All Loss'))
+#plot_recon = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Reconstruction Loss'))
+#plot_sep = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Separation Loss'))
+#plot_conc = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Concentration Loss'))
+#plot_transf = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation Loss'))
 
 torch.multiprocessing.set_start_method('spawn', force=True)
 #########################################parameter#########################################
@@ -374,8 +374,8 @@ if __name__ == '__main__':
     if not os.path.exists("SaveModelCKPT"):
         os.makedirs("SaveModelCKPT")
 
-    #train()
-    test()
+    train()
+    #test()
 
 # torch.save(model.state_dict(), './StackedHourGlass.pth')
 ##########################################################################################################################
