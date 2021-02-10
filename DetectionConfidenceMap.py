@@ -2,13 +2,13 @@ import torch
 from torch import nn
 import numpy as np
 import time
+from model.layers import Conv, Residual
 
 class DetectionConfidenceMap2keypoint(nn.Module):
     def __init__(self):
         super(DetectionConfidenceMap2keypoint, self).__init__()
 
     def forward(self, combined_hm_preds, tf_combined_hm_preds, cur_batch):
-        start_ = time.time()
         _, inp_channel, img_height, img_width = combined_hm_preds.shape
         keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
         tf_keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
@@ -16,11 +16,14 @@ class DetectionConfidenceMap2keypoint(nn.Module):
         R_k = combined_hm_preds #scoremap
         tf_R_k = tf_combined_hm_preds #scoremap (transformed)
 
-        softmax = torch.nn.Softmax(dim=1)
-        map_val_all = softmax(R_k) #detection map
-        tf_map_val_all = softmax(tf_R_k) #detection map (transformed)
+        #softmax = torch.nn.Softmax(dim=1)
+        #map_val_all = softmax(R_k) #detection map
+        #tf_map_val_all = softmax(tf_R_k) #detection map (transformed)
 
-        get_zeta = R_k.sum([2, 3]) #(b, k)
+        map_val_all = torch.abs(R_k)
+        tf_map_val_all = torch.abs(tf_R_k)
+
+        get_zeta = map_val_all.sum([2, 3]) #(b, k)
         tf_get_zeta = tf_map_val_all.sum([2, 3]) #(b, k)
 
         get_kp_x = torch.zeros(R_k.shape[0], R_k.shape[1]).cuda()#(b, k)
@@ -37,14 +40,16 @@ class DetectionConfidenceMap2keypoint(nn.Module):
                 tf_cur_val = tf_map_val_all[:, :, i, j]
                 tf_get_kp_x = tf_get_kp_x + j * tf_cur_val #(b,k)
                 tf_get_kp_y = tf_get_kp_y + i * tf_cur_val #(b,k)
-
-        '''
+        """
         my_kp = torch.cat((get_kp_x.unsqueeze(2), get_kp_y.unsqueeze(2)), 2)
         inv_get_zeta = (1/get_zeta).unsqueeze(2)
         keypoint = torch.round(my_kp * inv_get_zeta)
-        '''
-        #start_get = time.time()
 
+        tf_my_kp = torch.cat((tf_get_kp_x.unsqueeze(2), tf_get_kp_y.unsqueeze(2)), 2)
+        inv_get_tf_zeta = (1/tf_get_zeta).unsqueeze(2)
+        tf_keypoint = torch.round(tf_my_kp * inv_get_tf_zeta)
+
+        """
         R_k_shape_0 = R_k.shape[0]
         for b in range(R_k_shape_0):
             for k in range(inp_channel):
@@ -54,9 +59,39 @@ class DetectionConfidenceMap2keypoint(nn.Module):
                 tf_keypoint[b, k, 0] = int(torch.round((tf_get_kp_x[b, k] / tf_get_zeta[b, k])))
                 tf_keypoint[b, k, 1] = int(torch.round((tf_get_kp_y[b, k] / tf_get_zeta[b, k])))
 
-
         return map_val_all, keypoint, get_zeta, tf_keypoint
 
+class modified_DetectionConfidenceMap2keypoint(nn.Module):
+    def __init__(self):
+        super(modified_DetectionConfidenceMap2keypoint, self).__init__()
+
+    def forward(self, combined_hm_preds, tf_combined_hm_preds, cur_batch):
+        _, inp_channel, img_height, img_width = combined_hm_preds.shape
+        #keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
+        #tf_keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
+
+        R_k = combined_hm_preds #scoremap
+        tf_R_k = tf_combined_hm_preds #scoremap (transformed)
+
+        map_val_all = torch.abs(R_k)
+        tf_map_val_all = torch.abs(tf_R_k)
+
+        get_zeta = map_val_all.sum([2, 3]) #(b, k)
+        #tf_get_zeta = tf_map_val_all.sum([2, 3]) #(b, k)
+
+        find_col, indices_C = torch.max(map_val_all, dim=2)
+        my_col = torch.argmax(find_col, dim=2)
+        find_row, indices_R = torch.max(map_val_all, dim=3)
+        my_row = torch.argmax(find_row, dim=2)
+        keypoint = torch.cat([my_row.unsqueeze(2), my_col.unsqueeze(2)], dim=2)
+
+        find_col_tf, indices_C_tf = torch.max(tf_map_val_all, dim=2)
+        my_col_tf = torch.argmax(find_col_tf, dim=2)
+        find_row_tf, indices_R_tf = torch.max(tf_map_val_all, dim=3)
+        my_row_tf = torch.argmax(find_row_tf, dim=2)
+        tf_keypoint = torch.cat([my_row_tf.unsqueeze(2), my_col_tf.unsqueeze(2)], dim=2)
+
+        return map_val_all, keypoint, get_zeta, tf_keypoint
 
 class DetectionConfidenceMap2keypoint_test(nn.Module):
     def __init__(self):
@@ -170,7 +205,18 @@ class LinearReconScoreMap(nn.Module):
         self.linear_256_1024 = torch.nn.Linear(256, 1024)
         self.linear_1024_4096 = torch.nn.Linear(1024, 4096)
         self.linear_4096_end = torch.nn.Linear(4096, img_width * img_height)
-
+        '''
+        self.pre = nn.Sequential(
+            #Conv(2, 64, 3, 1, bn=True, relu=True),
+            #Conv(64, 1024, 3, 1, bn=True, relu=True),
+            Conv(200, 1024, 3, 1, bn=True, relu=True),
+            Conv(1024, 4096, 3, 1, bn=True, relu=True),
+            Residual(1024, 4096),
+            ##Pool(2, 2),
+            #Residual(4096, 4096),
+            Residual(4096, img_width * img_height)
+        )
+        '''
     def forward(self, keypoints, DetectionMap):
         out = self.linear_2_16(keypoints)
         out = self.linear_16_64(out)
@@ -178,6 +224,8 @@ class LinearReconScoreMap(nn.Module):
         out = self.linear_256_1024(out)
         out = self.linear_1024_4096(out)
         out = self.linear_4096_end(out)
+
+        #out = self.pre(keypoints)
 
         out = out.view(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2], DetectionMap.shape[3])
 

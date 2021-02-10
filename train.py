@@ -5,7 +5,7 @@ from torchvision.utils import save_image
 import time
 from model.layers import Linear, dec_Linear
 from StackedHourglass import StackedHourglassForKP, StackedHourglassImgRecon
-from DetectionConfidenceMap import DetectionConfidenceMap2keypoint, create_softmask, LinearReconScoreMap
+from DetectionConfidenceMap import DetectionConfidenceMap2keypoint, create_softmask, LinearReconScoreMap, modified_DetectionConfidenceMap2keypoint
 from loss import loss_concentration, loss_separation, loss_transformation
 from utils import my_dataset, saveKPimg
 import os
@@ -13,7 +13,7 @@ import numpy as np
 from tqdm import tqdm
 import torchvision
 import random
-
+import seaborn
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -36,11 +36,11 @@ torch.multiprocessing.set_start_method('spawn', force=True)
 h0 = 480
 w0 = 640
 
-num_of_kp = 345
+num_of_kp = 200
 feature_dimension = 32
 
-my_width = 80 #96 #272 #208
-my_height = 272 #32 #80 #64
+my_width = 160 #272 #96 #272 #208
+my_height = 48 #80 #32 #80 #64
 
 input_width = my_width
 
@@ -50,7 +50,7 @@ batch_size = 4
 stacked_hourglass_inpdim_kp = input_width
 stacked_hourglass_oupdim_kp = num_of_kp #number of my keypoints
 
-num_nstack = 4
+num_nstack = 2
 
 learning_rate = 1e-4 #1e-3
 weight_decay = 1e-5 #1e-5 #5e-4
@@ -83,7 +83,9 @@ def train():
 
     ###################################################################################################################
     if os.path.exists("./SaveModelCKPT/train_model.pth"):
+    #if os.path.exists("./SaveModelCKPT/train_model_loss_added_0_100.pth"):
         checkpoint = torch.load("./SaveModelCKPT/train_model.pth")
+        #checkpoint = torch.load("./SaveModelCKPT/train_model_loss_added_0_100.pth")
         model_StackedHourglassForKP.module.load_state_dict(checkpoint['model_StackedHourglassForKP'])
         model_feature_descriptor.module.load_state_dict(checkpoint['model_feature_descriptor'])
         model_score_map.module.load_state_dict(checkpoint['model_score_map'])
@@ -118,7 +120,6 @@ def train():
             forward_start_time = time.time()
             input_img, cur_filename, kp_img = data
 
-            a = torch.utils.data.get_worker_info()
             aefe_input = input_img.cuda() #(b, 3, height, width)
             cur_batch = aefe_input.shape[0]
             ##########################################ENCODER##########################################
@@ -130,13 +131,14 @@ def train():
             tf_combined_hm_preds = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack - 1, :, :, :] #Rk
 
             #save heat map
-            #if (epoch % 10 == 0):
-            #heatmap_save_filename = ("SaveHeatMapImg/heatmap_%s_epoch_%s.jpg" % (cur_filename, epoch))
-            #seaborn.heatmap(combined_hm_preds[0,0,:,:].detach().cpu().clone().numpy())
-            #save_image(combined_hm_preds, heatmap_save_filename)
-            #plt.savefig(heatmap_save_filename)
+            #if (((epoch+1) % 10 == 0) or (epoch==0)):
+                #heatmap_save_filename = ("SaveHeatMapImg/heatmap_%s_epoch_%s.jpg" % (cur_filename, epoch))
+                #seaborn.heatmap(combined_hm_preds[0,0,:,:].detach().cpu().clone().numpy())
+                #save_image(combined_hm_preds, heatmap_save_filename)
+                #plt.savefig(heatmap_save_filename)
 
-            fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
+            #fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
+            fn_DetectionConfidenceMap2keypoint = modified_DetectionConfidenceMap2keypoint()
             DetectionMap, keypoints, zeta, tf_keypoints = fn_DetectionConfidenceMap2keypoint(combined_hm_preds, tf_combined_hm_preds, cur_batch)
 
             fn_softmask = create_softmask()
@@ -145,23 +147,21 @@ def train():
             fn_loss_concentration = loss_concentration(softmask).cuda()
             fn_loss_separation = loss_separation(keypoints).cuda()
             fn_loss_transformation = loss_transformation(theta, keypoints, tf_keypoints, cur_batch, num_of_kp).cuda()
-
             cur_conc_loss = fn_loss_concentration()
             cur_sep_loss = fn_loss_separation()
             cur_transf_loss = fn_loss_transformation()
             #print("loss computation time:", time.time() - start_loss)
 
             start4 = time.time()
-            get_descriptors = combined_hm_preds
             fn_relu = torch.nn.ReLU().cuda()
             #leakyrelu4descriptors = torch.nn.LeakyReLU(0.01).cuda()
             #get_descriptors = fn_relu(get_descriptors) #(b,k,96,128)
 
-            Wk_raw = get_descriptors * DetectionMap
-            Wk_rsz = Wk_raw.view(Wk_raw.shape[0], Wk_raw.shape[1], Wk_raw.shape[2] * Wk_raw.shape[3])
-            Wk_ = model_feature_descriptor(Wk_rsz) #(b, k, 96*128) -> (b,k,128)
-            mul_all_torch = (softmask*fn_relu(get_descriptors)).sum(dim=[2, 3]).unsqueeze(2)
-            my_descriptor = (mul_all_torch * fn_relu(Wk_)) #(b, k, 128)
+            Wk_raw = combined_hm_preds * DetectionMap #(b,k,h,w)
+            Wk_rsz = Wk_raw.view(Wk_raw.shape[0], Wk_raw.shape[1], Wk_raw.shape[2] * Wk_raw.shape[3]) #(b,k,h*w)
+            Wk_ = model_feature_descriptor(Wk_rsz) #(b, k, h*w) -> (b,k,f)
+            mul_all_torch = (softmask*fn_relu(combined_hm_preds)).sum(dim=[2, 3]).unsqueeze(2)
+            my_descriptor = (mul_all_torch * fn_relu(Wk_)) #(b, k, f)
             #print("descriptor time", time.time() - start4)
 
             ##########################################DECODER##########################################
@@ -187,14 +187,14 @@ def train():
 
             cur_recon_loss = F.mse_loss(reconImg, aefe_input.detach())
 
-            cur_descriptorW_loss = F.mse_loss(Wk_raw,dec_Wk)
+            cur_descriptorW_loss = F.mse_loss(Wk_raw, dec_Wk)
 
-            param_loss_con = 50.0
-            param_loss_sep = 1000.0
+            param_loss_con = 500.0
+            param_loss_sep = 10000.0
             param_loss_recon = 1.0
             param_loss_transf = 1e-4
-            param_loss_detecionmap = 1.0
-            param_loss_descriptorW = 1.0
+            param_loss_detecionmap = 10.0
+            param_loss_descriptorW = 10.0
 
             loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_transf * cur_transf_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
 
@@ -233,7 +233,7 @@ def train():
 
             #print("Running Loss=>", "All loss", running_loss, "concentration loss: ", running_conc_loss, ",", "separation loss: ", running_sep_loss, ",", "reconstruction loss: ", running_recon_loss, "transformation loss: ", running_transf_loss)
 
-            if (epoch % 5 == 0):
+            if (((epoch+1) % 5 == 0) or (epoch==0)):
                 fn_save_kpimg = saveKPimg()
                 fn_save_kpimg(kp_img, keypoints, epoch, cur_filename)
                 img_save_filename = ("SaveReconstructedImg/recon_%s_epoch_%s.jpg" % (cur_filename, epoch))
