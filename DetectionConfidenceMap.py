@@ -91,6 +91,9 @@ class modified_DetectionConfidenceMap2keypoint(nn.Module):
         my_row_tf = torch.argmax(find_row_tf, dim=2)
         tf_keypoint = torch.cat([my_row_tf.unsqueeze(2), my_col_tf.unsqueeze(2)], dim=2)
 
+        keypoint = keypoint.to(torch.float)
+        tf_keypoint = tf_keypoint.to(torch.float)
+
         return map_val_all, keypoint, get_zeta, tf_keypoint
 
 class DetectionConfidenceMap2keypoint_test(nn.Module):

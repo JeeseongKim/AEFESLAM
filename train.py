@@ -45,12 +45,12 @@ my_height = 48 #80 #32 #80 #64
 input_width = my_width
 
 num_epochs = 100
-batch_size = 4
+batch_size = 8
 
 stacked_hourglass_inpdim_kp = input_width
 stacked_hourglass_oupdim_kp = num_of_kp #number of my keypoints
 
-num_nstack = 2
+num_nstack = 4
 
 learning_rate = 1e-4 #1e-3
 weight_decay = 1e-5 #1e-5 #5e-4
@@ -190,7 +190,7 @@ def train():
             cur_descriptorW_loss = F.mse_loss(Wk_raw, dec_Wk)
 
             param_loss_con = 500.0
-            param_loss_sep = 10000.0
+            param_loss_sep = 100000.0
             param_loss_recon = 1.0
             param_loss_transf = 1e-4
             param_loss_detecionmap = 10.0
