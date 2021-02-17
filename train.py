@@ -14,7 +14,8 @@ from tqdm import tqdm
 import torchvision
 import random
 import seaborn
-
+import matplotlib.pyplot as plt
+from torchvision import transforms
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -52,8 +53,8 @@ stacked_hourglass_oupdim_kp = num_of_kp #number of my keypoints
 
 num_nstack = 4
 
-learning_rate = 1e-4 #1e-3
-weight_decay = 1e-5 #1e-5 #5e-4
+learning_rate = 1e-4#1e-3#1e-4 #1e-3
+weight_decay = 1e-5#1e-2#1e-5 #1e-5 #5e-4
 ###########################################################################################
 concat_recon = []
 dtype = torch.FloatTensor
@@ -63,23 +64,28 @@ def train():
 
     model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=stacked_hourglass_inpdim_kp, oup_dim=stacked_hourglass_oupdim_kp, bn=False, increase=0)
     model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
-    optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=1e-3, weight_decay=2e-4)
+    optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     model_feature_descriptor = Linear(img_width=my_width, img_height=my_height, feature_dimension=feature_dimension)
     model_feature_descriptor = nn.DataParallel(model_feature_descriptor).cuda()
-    optimizer_Wk_ = torch.optim.Adam(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_Wk_ = torch.optim.Adam(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    optimizer_Wk_ = torch.optim.AdamW(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
 
     model_score_map = LinearReconScoreMap(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
     model_score_map = nn.DataParallel(model_score_map).cuda()
-    optimizer_reconDetection = torch.optim.Adam(model_score_map.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_reconDetection = torch.optim.Adam(model_score_map.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer_reconDetection = torch.optim.AdamW(model_score_map.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     model_dec_feature_descriptor = dec_Linear(feature_dimension=feature_dimension, img_width=my_height, img_height=my_width)
     model_dec_feature_descriptor = nn.DataParallel(model_dec_feature_descriptor).cuda()
-    optimizer_decfeatureDescriptor = torch.optim.Adam(model_dec_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_decfeatureDescriptor = torch.optim.Adam(model_dec_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    optimizer_decfeatureDescriptor = torch.optim.AdamW(model_dec_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
 
     model_StackedHourglassImgRecon = StackedHourglassImgRecon(num_of_kp=num_of_kp, nstack=num_nstack, inp_dim=stacked_hourglass_inpdim_kp, oup_dim=3, bn=False, increase=0)
     model_StackedHourglassImgRecon = nn.DataParallel(model_StackedHourglassImgRecon).cuda()
-    optimizer_ImgRecon = torch.optim.Adam(model_StackedHourglassImgRecon.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_ImgRecon = torch.optim.Adam(model_StackedHourglassImgRecon.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer_ImgRecon = torch.optim.AdamW(model_StackedHourglassImgRecon.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     ###################################################################################################################
     if os.path.exists("./SaveModelCKPT/train_model.pth"):
@@ -127,15 +133,18 @@ def train():
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input) #randomly rotated image
 
-            combined_hm_preds = model_StackedHourglassForKP(aefe_input)[:, num_nstack-1, :, :, :] #Rk
-            tf_combined_hm_preds = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack - 1, :, :, :] #Rk
+            #combined_hm_preds = model_StackedHourglassForKP(aefe_input)[:, num_nstack-1, :, :, :] #Rk
+            #tf_combined_hm_preds = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack - 1, :, :, :] #Rk
+
+            combined_hm_preds = model_StackedHourglassForKP(aefe_input).sum(dim=1)
+            tf_combined_hm_preds = model_StackedHourglassForKP(tf_aefe_input).sum(dim=1)
 
             #save heat map
             #if (((epoch+1) % 10 == 0) or (epoch==0)):
-                #heatmap_save_filename = ("SaveHeatMapImg/heatmap_%s_epoch_%s.jpg" % (cur_filename, epoch))
-                #seaborn.heatmap(combined_hm_preds[0,0,:,:].detach().cpu().clone().numpy())
-                #save_image(combined_hm_preds, heatmap_save_filename)
-                #plt.savefig(heatmap_save_filename)
+            #heatmap_save_filename = ("SaveHeatMapImg/heatmap_%s_epoch_%s.jpg" % (cur_filename, epoch))
+            #my_hm = seaborn.heatmap(combined_hm_preds[0, 0, :, :].detach().cpu().clone().numpy(), cmap='coolwarm')
+            ##save_image(combined_hm_preds, heatmap_save_filename)
+            #plt.savefig(heatmap_save_filename, dpi=400)
 
             #fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
             fn_DetectionConfidenceMap2keypoint = modified_DetectionConfidenceMap2keypoint()
@@ -190,11 +199,11 @@ def train():
             cur_descriptorW_loss = F.mse_loss(Wk_raw, dec_Wk)
 
             param_loss_con = 500.0
-            param_loss_sep = 100000.0
-            param_loss_recon = 1.0
+            param_loss_sep = 1.0 #1e-2 #1.0
+            param_loss_recon = 10.0
             param_loss_transf = 1e-4
             param_loss_detecionmap = 10.0
-            param_loss_descriptorW = 10.0
+            param_loss_descriptorW = 100.0
 
             loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_transf * cur_transf_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
 
@@ -233,10 +242,10 @@ def train():
 
             #print("Running Loss=>", "All loss", running_loss, "concentration loss: ", running_conc_loss, ",", "separation loss: ", running_sep_loss, ",", "reconstruction loss: ", running_recon_loss, "transformation loss: ", running_transf_loss)
 
-            if (((epoch+1) % 5 == 0) or (epoch==0)):
+            if (((epoch+1) % 5 == 0) or (epoch==0) or (epoch+1==num_epochs)):
                 fn_save_kpimg = saveKPimg()
-                fn_save_kpimg(kp_img, keypoints, epoch, cur_filename)
-                img_save_filename = ("SaveReconstructedImg/recon_%s_epoch_%s.jpg" % (cur_filename, epoch))
+                fn_save_kpimg(kp_img, keypoints, epoch+1, cur_filename)
+                img_save_filename = ("SaveReconstructedImg/recon_%s_epoch_%s.jpg" % (cur_filename, epoch+1))
                 save_image(reconImg, img_save_filename)
                 if(epoch != 0):
                     torch.save({

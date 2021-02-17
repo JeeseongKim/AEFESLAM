@@ -47,8 +47,8 @@ class my_dataset(Dataset):
         self.input_width = my_width
         #lg dataset(96,128))
 
-        #for filename in (sorted(glob.glob('./Kitti/sequences/00/image_2/*.png'))):
-        for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
+        for filename in (sorted(glob.glob('./Kitti/sequences/00/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./Kitti_tmp/sequences/00/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./data/*.jpg'))):
             im = Image.open(filename)
@@ -91,7 +91,7 @@ class saveKPimg(nn.Module):
                 else:
                     kpimg = cv2.circle(kpimg, tuple(cur_kp[i, :]), 2, (0, 0, 255), -1)
             save_kpimg = transforms.ToTensor()(kpimg).unsqueeze(0) # (1,3,192,256)
-            img_save_filename = ("SaveKPImg2/%s_epoch_%s.jpg" % (cur_filename[b], epoch))
+            img_save_filename = ("SaveKPImg/%s_epoch_%s.jpg" % (cur_filename[b], epoch))
             save_image(save_kpimg, img_save_filename)
 
 class multivariate_normal(nn.Module):

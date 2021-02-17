@@ -27,7 +27,7 @@ class loss_separation(nn.Module):
         super(loss_separation, self).__init__()
         sep_loss = 0
         kp_sz_0, kp_sz_1, _ = keypoints.shape
-        #scale_param = 1e-9
+        self. scale_param = 1e-9
         #scale_param = 1e-3
 
         for i in range(kp_sz_1):
@@ -35,8 +35,8 @@ class loss_separation(nn.Module):
             #sep_loss = sep_loss + torch.exp(-1*cur_loss)
             sep_loss = sep_loss + cur_loss
 
-        #self.sep_loss_output = torch.exp(-1 * scale_param * sep_loss)
-        self.sep_loss_output = 1/sep_loss
+        self.sep_loss_output = torch.exp(-1 * self. scale_param * sep_loss)
+        #self.sep_loss_output = 1/sep_loss
 
     def forward(self):
         return self.sep_loss_output
