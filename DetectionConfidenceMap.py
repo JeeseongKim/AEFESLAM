@@ -73,8 +73,12 @@ class modified_DetectionConfidenceMap2keypoint(nn.Module):
         R_k = combined_hm_preds #scoremap
         tf_R_k = tf_combined_hm_preds #scoremap (transformed)
 
-        map_val_all = torch.abs(R_k)
-        tf_map_val_all = torch.abs(tf_R_k)
+        softmax = torch.nn.Softmax(dim=1)
+        map_val_all = softmax(R_k) #detection map
+        tf_map_val_all = softmax(tf_R_k) #detection map (transformed)
+
+        #map_val_all = torch.abs(R_k)
+        #tf_map_val_all = torch.abs(tf_R_k)
 
         get_zeta = map_val_all.sum([2, 3]) #(b, k)
         #tf_get_zeta = tf_map_val_all.sum([2, 3]) #(b, k)
@@ -95,6 +99,27 @@ class modified_DetectionConfidenceMap2keypoint(nn.Module):
         tf_keypoint = tf_keypoint.to(torch.float)
 
         return map_val_all, keypoint, get_zeta, tf_keypoint
+
+class noTF_DetectionConfidenceMap2keypoint(nn.Module):
+    def __init__(self):
+        super(noTF_DetectionConfidenceMap2keypoint, self).__init__()
+
+    def forward(self, combined_hm_preds, cur_batch):
+        _, inp_channel, img_height, img_width = combined_hm_preds.shape
+
+        R_k = combined_hm_preds  # scoremap
+        map_val_all = R_k
+        get_zeta = map_val_all.sum([2, 3])  # (b, k)
+
+        find_col, indices_C = torch.max(map_val_all, dim=2)
+        my_col = torch.argmax(find_col, dim=2)
+        find_row, indices_R = torch.max(map_val_all, dim=3)
+        my_row = torch.argmax(find_row, dim=2)
+        keypoint = torch.cat([my_row.unsqueeze(2), my_col.unsqueeze(2)], dim=2)
+
+        keypoint = keypoint.to(torch.float)
+
+        return map_val_all, keypoint, get_zeta
 
 class DetectionConfidenceMap2keypoint_test(nn.Module):
     def __init__(self):
