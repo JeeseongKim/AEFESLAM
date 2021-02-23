@@ -66,6 +66,7 @@ def train():
     model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
     #optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=1e-3, weight_decay=2e-4)
     optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=5e-4, weight_decay=5e-5)
 
     model_feature_descriptor = Linear(img_width=my_width, img_height=my_height, feature_dimension=feature_dimension)
     model_feature_descriptor = nn.DataParallel(model_feature_descriptor).cuda()
@@ -146,8 +147,8 @@ def train():
             ##save_image(combined_hm_preds, heatmap_save_filename)
             #plt.savefig(heatmap_save_filename, dpi=400)
 
-            #fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
-            fn_DetectionConfidenceMap2keypoint = modified_DetectionConfidenceMap2keypoint()
+            fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
+            #fn_DetectionConfidenceMap2keypoint = modified_DetectionConfidenceMap2keypoint()
             DetectionMap, keypoints, zeta, tf_keypoints = fn_DetectionConfidenceMap2keypoint(combined_hm_preds, tf_combined_hm_preds, cur_batch)
 
             fn_softmask = create_softmask()
@@ -199,11 +200,11 @@ def train():
             cur_descriptorW_loss = F.mse_loss(Wk_raw, dec_Wk)
 
             param_loss_con = 500.0
-            param_loss_sep = 1.0 #1e-2 #1.0
+            param_loss_sep = 100.0 #1e-2 #1.0
             param_loss_recon = 10.0
-            param_loss_transf = 1e-4
-            param_loss_detecionmap = 10.0
-            param_loss_descriptorW = 100.0
+            param_loss_transf = 1e-3
+            param_loss_detecionmap = 10.0#10.0
+            param_loss_descriptorW = 1.0
 
             loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_transf * cur_transf_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
 

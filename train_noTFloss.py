@@ -5,7 +5,7 @@ from torchvision.utils import save_image
 import time
 from model.layers import Linear, dec_Linear
 from StackedHourglass import StackedHourglassForKP, StackedHourglassImgRecon
-from DetectionConfidenceMap import DetectionConfidenceMap2keypoint, create_softmask, LinearReconScoreMap, modified_DetectionConfidenceMap2keypoint, noTF_DetectionConfidenceMap2keypoint
+from DetectionConfidenceMap import DetectionConfidenceMap2keypoint, create_softmask, LinearReconScoreMap, modified_DetectionConfidenceMap2keypoint, noTF_maxKP_DetectionConfidenceMap2keypoint, noTF_DetectionConfidenceMap2keypoint
 from loss import loss_concentration, loss_separation, loss_transformation
 from utils import my_dataset, saveKPimg
 import os
@@ -30,6 +30,7 @@ plot_sep = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='S
 plot_conc = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Concentration Loss'))
 #plot_transf = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation Loss'))
 plot_detection = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Detection Map Loss'))
+plot_score = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Score Map Loss'))
 plot_weightW = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Descriptor weight Loss'))
 
 torch.multiprocessing.set_start_method('spawn', force=True)
@@ -45,13 +46,13 @@ my_height = 48 #80 #32 #80 #64
 
 input_width = my_width
 
-num_epochs = 100
+num_epochs = 1000
 batch_size = 8
 
 stacked_hourglass_inpdim_kp = input_width
 stacked_hourglass_oupdim_kp = num_of_kp #number of my keypoints
 
-num_nstack = 4
+num_nstack = 6
 
 learning_rate = 1e-4#1e-3#1e-4 #1e-3
 weight_decay = 1e-5#1e-2#1e-5 #1e-5 #5e-4
@@ -66,7 +67,7 @@ def train():
     model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
     #optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=1e-3, weight_decay=2e-4)
     #optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=5e-4, weight_decay=5e-5)
+    optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     model_feature_descriptor = Linear(img_width=my_width, img_height=my_height, feature_dimension=feature_dimension)
     model_feature_descriptor = nn.DataParallel(model_feature_descriptor).cuda()
@@ -90,9 +91,11 @@ def train():
 
     ###################################################################################################################
     if os.path.exists("./SaveModelCKPT/train_model.pth"):
-    #if os.path.exists("./SaveModelCKPT/train_model_loss_added_0_100.pth"):
+    #if os.path.exists("./SaveModelCKPT/train_model_210222.pth"):
+    #if os.path.exists("./SaveModelCKPT/train_model_210220.pth"):
+        #checkpoint = torch.load("./SaveModelCKPT/train_model_210222.pth")
         checkpoint = torch.load("./SaveModelCKPT/train_model.pth")
-        #checkpoint = torch.load("./SaveModelCKPT/train_model_loss_added_0_100.pth")
+        #checkpoint = torch.load("./SaveModelCKPT/train_model_210221.pth")
         model_StackedHourglassForKP.module.load_state_dict(checkpoint['model_StackedHourglassForKP'])
         model_feature_descriptor.module.load_state_dict(checkpoint['model_feature_descriptor'])
         model_score_map.module.load_state_dict(checkpoint['model_score_map'])
@@ -122,9 +125,9 @@ def train():
         running_conc_loss = 0
         #running_transf_loss = 0
         running_detection_loss = 0
+        running_score_loss = 0
         running_descriptorW_loss= 0
         for i, data in enumerate(tqdm(train_loader)):
-            forward_start_time = time.time()
             input_img, cur_filename, kp_img = data
 
             aefe_input = input_img.cuda() #(b, 3, height, width)
@@ -138,6 +141,7 @@ def train():
             #tf_combined_hm_preds = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack - 1, :, :, :] #Rk
 
             combined_hm_preds = model_StackedHourglassForKP(aefe_input).sum(dim=1)
+            combined_hm_preds = torch.abs(combined_hm_preds)
             #tf_combined_hm_preds = model_StackedHourglassForKP(tf_aefe_input).sum(dim=1)
 
             #save heat map
@@ -148,11 +152,16 @@ def train():
             #plt.savefig(heatmap_save_filename, dpi=400)
 
             #fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
-            fn_DetectionConfidenceMap2keypoint = noTF_DetectionConfidenceMap2keypoint()
-            DetectionMap, keypoints, zeta= fn_DetectionConfidenceMap2keypoint(combined_hm_preds, cur_batch)
+            fn_DetectionConfidenceMap2keypoint = noTF_maxKP_DetectionConfidenceMap2keypoint()
+            #fn_DetectionConfidenceMap2keypoint = noTF_DetectionConfidenceMap2keypoint()
+            DetectionMap, keypoints, zeta = fn_DetectionConfidenceMap2keypoint(combined_hm_preds, cur_batch)
 
             fn_softmask = create_softmask()
             softmask = fn_softmask(DetectionMap, zeta)  # (b,k,96,128)
+            softmask_min = torch.min(torch.min(softmask, dim=2)[0], dim=2)[0]
+            softmask_max = torch.max(torch.max(softmask, dim=2)[0], dim=2)[0]
+            softmask_my_max_min = torch.cat([softmask_min.unsqueeze(2), softmask_max.unsqueeze(2)], dim=2)  # (b,k,2,1) 2: min, max
+            softmask = (softmask - softmask_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)) / softmask_my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3)
 
             fn_loss_concentration = loss_concentration(softmask).cuda()
             fn_loss_separation = loss_separation(keypoints).cuda()
@@ -180,8 +189,18 @@ def train():
             #reconDetectionMap = fn_reconDetectionMap(keypoints, DetectionMap)
             ##########
             reconScoreMap = model_score_map(keypoints, DetectionMap)
-            softmax = torch.nn.Softmax(dim=1)
-            reconDetectionMap = softmax(reconScoreMap)
+            cur_score_loss = F.mse_loss(combined_hm_preds, reconScoreMap)
+            #softmax = torch.nn.Softmax(dim=1)
+            #reconDetectionMap = softmax(reconScoreMap)
+
+            reconDk_min = torch.min(torch.min(reconScoreMap, dim=2)[0], dim=2)[0]
+            reconDk_max = torch.max(torch.max(reconScoreMap, dim=2)[0], dim=2)[0]
+            recon_my_max_min = torch.cat([reconDk_min.unsqueeze(2), reconDk_max.unsqueeze(2)], dim=2)  # (b,k,2,1) 2: min, max
+
+            reconDetectionMap = (reconScoreMap - recon_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)) / recon_my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3)
+
+            #reconDetectionMap = torch.abs(reconScoreMap)
+            #reconDetectionMap = reconScoreMap
             #reconDetectionMap = fn_relu(reconDetectionMap)
 
             cur_detection_loss = F.mse_loss(DetectionMap, reconDetectionMap)
@@ -199,21 +218,23 @@ def train():
 
             cur_descriptorW_loss = F.mse_loss(Wk_raw, dec_Wk)
 
-            param_loss_con = 500.0
-            param_loss_sep = 10000.0 #1e-2 #1.0
+            param_loss_con = 1e-1
+            param_loss_sep = 100.0 #1e-2 #1.0
             param_loss_recon = 10.0
             #param_loss_transf = 1e-4
-            param_loss_detecionmap = 1000.0#10.0
-            param_loss_descriptorW = 100.0
+            param_loss_detecionmap = 10.0 #10.0
+            param_loss_descriptorW = 1e-3
+            param_loss_score = 0.3
 
             #loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_transf * cur_transf_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
-            loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
+            #loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
+            loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda() + param_loss_score * cur_score_loss.cuda(0)
 
             #loss = loss.cuda()
             #loss = 1000.0 * cur_conc_loss.cuda() + 1.0 * cur_sep_loss.cuda() + 1.0 * cur_recon_loss.cuda()
 
-            print("Computing Loss=>", "concentration loss: ", param_loss_con * cur_conc_loss.item(), ",", "separation loss: ", param_loss_sep * cur_sep_loss.item(), ",", "cur_recon_loss: ", param_loss_recon * cur_recon_loss.item(),
-                  "detection map loss", param_loss_detecionmap * cur_detection_loss.cuda().item(), "descriptorW_loss", param_loss_descriptorW * cur_descriptorW_loss.item())
+            print("concentration loss: ", param_loss_con * cur_conc_loss.item(), ",", "separation loss: ", param_loss_sep * cur_sep_loss.item(), ",", "cur_recon_loss: ", param_loss_recon * cur_recon_loss.item(),
+                  "detection map loss", param_loss_detecionmap * cur_detection_loss.cuda().item(), "descriptorW_loss", param_loss_descriptorW * cur_descriptorW_loss.item(), "score_loss", param_loss_score * cur_score_loss.item())
 
             # ================Backward================
             backward_start_time = time.time()
@@ -239,6 +260,7 @@ def train():
             #running_transf_loss = running_transf_loss + param_loss_transf * cur_transf_loss.item()
             running_detection_loss = running_detection_loss + param_loss_detecionmap * cur_detection_loss.item()
             running_descriptorW_loss = running_descriptorW_loss + param_loss_descriptorW * cur_descriptorW_loss.item()
+            running_score_loss = running_score_loss + param_loss_score * cur_score_loss.item()
 
             #print("Running Loss=>", "All loss", running_loss, "concentration loss: ", running_conc_loss, ",", "separation loss: ", running_sep_loss, ",", "reconstruction loss: ", running_recon_loss, "transformation loss: ", running_transf_loss)
 
@@ -269,9 +291,10 @@ def train():
         #vis.line(Y=[running_transf_loss], X=np.array([epoch]), win=plot_transf, update='append')
         vis.line(Y=[running_detection_loss], X=np.array([epoch]), win=plot_detection, update='append')
         vis.line(Y=[running_descriptorW_loss], X=np.array([epoch]), win=plot_weightW, update='append')
+        vis.line(Y=[running_score_loss], X=np.array([epoch]), win=plot_score, update='append')
 
         #saveLossData = 'epoch\t{}\trunning_loss_all\t{:.4f} \trunning_conc_loss\t{:.4f} \trunning_recon_loss\t{:.4f} \trunning_sep_loss\t{:.4f} \trunning_transf_loss\t{:.4f}\trunning_detection_loss\t{:.4f}\n'.format(epoch, running_loss, running_conc_loss, running_recon_loss, running_sep_loss, running_transf_loss, running_detection_loss, running_descriptorW_loss)
-        saveLossData = 'epoch\t{}\trunning_loss_all\t{:.4f} \trunning_conc_loss\t{:.4f} \trunning_recon_loss\t{:.4f} \trunning_sep_loss\t{:.4f} \trunning_detection_loss\t{:.4f}\n'.format(epoch, running_loss, running_conc_loss, running_recon_loss, running_sep_loss, running_detection_loss, running_descriptorW_loss)
+        saveLossData = 'epoch\t{}\trunning_loss_all\t{:.4f} \trunning_conc_loss\t{:.4f} \trunning_recon_loss\t{:.4f} \trunning_sep_loss\t{:.4f} \trunning_detection_loss\t{:.4f} \trunning_score_loss\t{:.4f}\n'.format(epoch, running_loss, running_conc_loss, running_recon_loss, running_sep_loss, running_detection_loss, running_descriptorW_loss, running_score_loss)
 
         saveLossTxt.write(saveLossData)
 

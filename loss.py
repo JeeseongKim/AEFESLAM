@@ -6,6 +6,7 @@ import math
 import time
 import torch.nn.functional as F
 from utils import my_dataset, saveKPimg, make_transformation_M
+import numpy as np
 
 class loss_concentration(nn.Module):
     def __init__(self, softmask):
@@ -17,7 +18,10 @@ class loss_concentration(nn.Module):
             for k in range(dmap_sz_1):
                 var = var + torch.var(softmask[b, k, :, :])
 
-        self.conc_loss = var ** 0.5
+        #self.conc_loss = torch.exp(0.5*var) ** 0.5
+        self.conc_loss = 2 * (var ** 0.5)
+        #self.conc_loss = (var ** 2)
+
 
     def forward(self):
         return self.conc_loss
@@ -27,7 +31,7 @@ class loss_separation(nn.Module):
         super(loss_separation, self).__init__()
         sep_loss = 0
         kp_sz_0, kp_sz_1, _ = keypoints.shape
-        self. scale_param = 2e-9 #1e-9
+        #self. scale_param = 2e-9 #1e-9
         #scale_param = 1e-3
 
         for i in range(kp_sz_1):
@@ -37,8 +41,9 @@ class loss_separation(nn.Module):
             sep_loss = sep_loss + cur_loss
 
         #self.sep_loss_output = torch.exp(-1 * self. scale_param * sep_loss)
-        self.sep_loss_output = 50/sep_loss
+        #self.sep_loss_output = 200/sep_loss
         #self.sep_loss_output = sep_loss
+        self.sep_loss_output = (1+torch.tanh(1e-5*sep_loss))*(1-torch.tanh(1e-5*sep_loss))
 
     def forward(self):
         return self.sep_loss_output

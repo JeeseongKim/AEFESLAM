@@ -61,6 +61,36 @@ class DetectionConfidenceMap2keypoint(nn.Module):
 
         return map_val_all, keypoint, get_zeta, tf_keypoint
 
+class noTF_DetectionConfidenceMap2keypoint(nn.Module):
+    def __init__(self):
+        super(noTF_DetectionConfidenceMap2keypoint, self).__init__()
+
+    def forward(self, combined_hm_preds, cur_batch):
+        _, inp_channel, img_height, img_width = combined_hm_preds.shape
+        keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
+
+        R_k = combined_hm_preds  # scoremap
+        map_val_all = R_k
+
+        get_zeta = map_val_all.sum([2, 3])  # (b, k)
+
+        get_kp_x = torch.zeros(R_k.shape[0], R_k.shape[1]).cuda()  # (b, k)
+        get_kp_y = torch.zeros(R_k.shape[0], R_k.shape[1]).cuda()  # (b, k)
+
+        for i in range(img_height):
+            for j in range(img_width):
+                cur_val = map_val_all[:, :, i, j]
+                get_kp_x = get_kp_x + j * cur_val  # (b,k)
+                get_kp_y = get_kp_y + i * cur_val  # (b,k)
+
+        R_k_shape_0 = R_k.shape[0]
+        for b in range(R_k_shape_0):
+            for k in range(inp_channel):
+                keypoint[b, k, 0] = int(torch.round((get_kp_x[b, k] / get_zeta[b, k])))
+                keypoint[b, k, 1] = int(torch.round((get_kp_y[b, k] / get_zeta[b, k])))
+
+        return map_val_all, keypoint, get_zeta
+
 class modified_DetectionConfidenceMap2keypoint(nn.Module):
     def __init__(self):
         super(modified_DetectionConfidenceMap2keypoint, self).__init__()
@@ -100,21 +130,29 @@ class modified_DetectionConfidenceMap2keypoint(nn.Module):
 
         return map_val_all, keypoint, get_zeta, tf_keypoint
 
-class noTF_DetectionConfidenceMap2keypoint(nn.Module):
+class noTF_maxKP_DetectionConfidenceMap2keypoint(nn.Module):
     def __init__(self):
-        super(noTF_DetectionConfidenceMap2keypoint, self).__init__()
+        super(noTF_maxKP_DetectionConfidenceMap2keypoint, self).__init__()
 
     def forward(self, combined_hm_preds, cur_batch):
         _, inp_channel, img_height, img_width = combined_hm_preds.shape
 
         R_k = combined_hm_preds  # scoremap
-        map_val_all = R_k
+
+        Dk_min = torch.min(torch.min(R_k, dim=2)[0], dim=2)[0]
+        Dk_max = torch.max(torch.max(R_k, dim=2)[0], dim=2)[0]
+        my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
+        map_val_all = (R_k - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/(my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3))
+
+        #Dk_min = torch.min(torch.min(torch.abs(R_k), dim=2)[0], dim=2)[0]
+        #Dk_max = torch.max(torch.max(torch.abs(R_k), dim=2)[0], dim=2)[0]
+        #my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
+        #map_val_all = (torch.abs(R_k) - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/(my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3))
+
         get_zeta = map_val_all.sum([2, 3])  # (b, k)
 
-        find_col, indices_C = torch.max(map_val_all, dim=2)
-        my_col = torch.argmax(find_col, dim=2)
-        find_row, indices_R = torch.max(map_val_all, dim=3)
-        my_row = torch.argmax(find_row, dim=2)
+        my_col = torch.argmax(torch.max(map_val_all, dim=2)[0], dim=2)
+        my_row = torch.argmax(torch.max(map_val_all, dim=3)[0], dim=2)
         keypoint = torch.cat([my_row.unsqueeze(2), my_col.unsqueeze(2)], dim=2)
 
         keypoint = keypoint.to(torch.float)
