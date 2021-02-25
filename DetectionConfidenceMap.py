@@ -3,6 +3,7 @@ from torch import nn
 import numpy as np
 import time
 from model.layers import Conv, Residual
+import torch.nn.functional as F
 
 class DetectionConfidenceMap2keypoint(nn.Module):
     def __init__(self):
@@ -70,7 +71,11 @@ class noTF_DetectionConfidenceMap2keypoint(nn.Module):
         keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
 
         R_k = combined_hm_preds  # scoremap
-        map_val_all = R_k
+        #map_val_all = R_k
+        Dk_min = torch.min(torch.min(R_k, dim=2)[0], dim=2)[0]
+        Dk_max = torch.max(torch.max(R_k, dim=2)[0], dim=2)[0]
+        my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
+        map_val_all = (R_k - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/(my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3))
 
         get_zeta = map_val_all.sum([2, 3])  # (b, k)
 
@@ -139,15 +144,17 @@ class noTF_maxKP_DetectionConfidenceMap2keypoint(nn.Module):
 
         R_k = combined_hm_preds  # scoremap
 
-        Dk_min = torch.min(torch.min(R_k, dim=2)[0], dim=2)[0]
-        Dk_max = torch.max(torch.max(R_k, dim=2)[0], dim=2)[0]
-        my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
-        map_val_all = (R_k - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/(my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3))
+        #Dk_min = torch.min(torch.min(R_k, dim=2)[0], dim=2)[0]
+        #Dk_max = torch.max(torch.max(R_k, dim=2)[0], dim=2)[0]
+        #my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
+        #map_val_all = (R_k - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/(my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3))
 
         #Dk_min = torch.min(torch.min(torch.abs(R_k), dim=2)[0], dim=2)[0]
         #Dk_max = torch.max(torch.max(torch.abs(R_k), dim=2)[0], dim=2)[0]
         #my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
         #map_val_all = (torch.abs(R_k) - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/(my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3))
+
+        map_val_all = F.normalize(R_k, p=2, dim=1)
 
         get_zeta = map_val_all.sum([2, 3])  # (b, k)
 
@@ -158,6 +165,34 @@ class noTF_maxKP_DetectionConfidenceMap2keypoint(nn.Module):
         keypoint = keypoint.to(torch.float)
 
         return map_val_all, keypoint, get_zeta
+
+class YesTF_maxKP_DetectionConfidenceMap2keypoint(nn.Module):
+    def __init__(self):
+        super(YesTF_maxKP_DetectionConfidenceMap2keypoint, self).__init__()
+
+    def forward(self, combined_hm_preds, tf_combined_hm_preds):
+        _, inp_channel, img_height, img_width = combined_hm_preds.shape
+
+        R_k = combined_hm_preds  # scoremap
+        tf_R_k = tf_combined_hm_preds  # scoremap (transformed)
+
+        map_val_all = F.normalize(R_k, p=2, dim=1)
+        tf_map_val_all = F.normalize(tf_R_k, p=2, dim=1)
+
+        get_zeta = map_val_all.sum([2, 3])  # (b, k)
+        #tf_get_zeta = tf_map_val_all.sum([2, 3])  # (b, k)
+
+        my_col = torch.argmax(torch.max(map_val_all, dim=2)[0], dim=2)
+        my_row = torch.argmax(torch.max(map_val_all, dim=3)[0], dim=2)
+        keypoint = torch.cat([my_row.unsqueeze(2), my_col.unsqueeze(2)], dim=2)
+        keypoint = keypoint.to(torch.float)
+
+        tf_my_col = torch.argmax(torch.max(tf_map_val_all, dim=2)[0], dim=2)
+        tf_my_row = torch.argmax(torch.max(tf_map_val_all, dim=3)[0], dim=2)
+        tf_keypoint = torch.cat([tf_my_row.unsqueeze(2), tf_my_col.unsqueeze(2)], dim=2)
+        tf_keypoint = tf_keypoint.to(torch.float)
+
+        return map_val_all, keypoint, get_zeta, tf_map_val_all, tf_keypoint
 
 class DetectionConfidenceMap2keypoint_test(nn.Module):
     def __init__(self):
