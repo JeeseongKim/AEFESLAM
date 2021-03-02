@@ -41,7 +41,7 @@ torch.multiprocessing.set_start_method('spawn', force=True)
 h0 = 480
 w0 = 640
 
-num_of_kp = 200
+num_of_kp = 128 #200
 feature_dimension = 32
 
 my_width = 160 #272 #96 #272 #208
@@ -50,7 +50,7 @@ my_height = 48 #80 #32 #80 #64
 input_width = my_width
 
 num_epochs = 1000
-batch_size = 8
+batch_size = 1
 
 stacked_hourglass_inpdim_kp = input_width
 stacked_hourglass_oupdim_kp = num_of_kp #number of my keypoints
@@ -58,7 +58,7 @@ stacked_hourglass_oupdim_kp = num_of_kp #number of my keypoints
 num_nstack = 6
 
 learning_rate = 1e-4 #1e-3#1e-4 #1e-3
-weight_decay = 5e-4 #1e-5#1e-2#1e-5 #1e-5 #5e-4
+weight_decay = 1e-5 #1e-5#1e-2#1e-5 #1e-5 #5e-4
 ###########################################################################################
 concat_recon = []
 dtype = torch.FloatTensor
@@ -98,12 +98,14 @@ def train():
     ###################################################################################################################
     if os.path.exists("./SaveModelCKPT/train_model.pth"):
         checkpoint = torch.load("./SaveModelCKPT/train_model.pth")
+        #model_L2net.module.load_state_dict(checkpoint['model_StackedHourglassForKP'])
         model_L2net.module.load_state_dict(checkpoint['model_L2net'])
         model_feature_descriptor.module.load_state_dict(checkpoint['model_feature_descriptor'])
         model_score_map.module.load_state_dict(checkpoint['model_score_map'])
         model_dec_feature_descriptor.module.load_state_dict(checkpoint['model_dec_feature_descriptor'])
         model_StackedHourglassImgRecon.module.load_state_dict(checkpoint['model_StackedHourglassImgRecon'])
 
+        #optimizer_L2.load_state_dict(checkpoint['optimizer_StackedHourglass_kp'])
         optimizer_L2.load_state_dict(checkpoint['optimizer_L2'])
         optimizer_Wk_.load_state_dict(checkpoint['optimizer_Wk_'])
         optimizer_reconDetection.load_state_dict(checkpoint['optimizer_reconDetection'])
@@ -137,35 +139,59 @@ def train():
             cur_batch = aefe_input.shape[0]
             ##########################################ENCODER##########################################
             theta = random.uniform(-60, 60)
-            my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
+            #TFmatrix = make_transformation_M(theta, 0, 0)
+            my_transform = torchvision.transforms.RandomAffine(degrees=(theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input) #randomly rotated image
+
+            rotation_R = torch.zeros(2, 2)
+            rotation_R[0, 0] = math.cos(theta)
+            rotation_R[0, 1] = -math.sin(theta)
+            rotation_R[1, 0] = math.sin(theta)
+            rotation_R[1, 1] = math.cos(theta)
+
+            corner_P = torch.zeros(2, 4)
+            corner_P[0, 0] = -0.5*my_width
+            corner_P[0, 1] = -0.5*my_width
+            corner_P[0, 2] = 0.5*my_width
+            corner_P[0, 3] = 0.5*my_width
+            corner_P[1, 0] = 0.5*my_height
+            corner_P[1, 1] = -0.5*my_height
+            corner_P[1, 2] = 0.5*my_height
+            corner_P[1, 3] = -0.5*my_height
+            tf_corner_P = torch.matmul(rotation_R, corner_P)
 
             combined_hm_preds = model_L2net(aefe_input)
             tf_combined_hm_preds = model_L2net(tf_aefe_input)
 
             fn_DetectionConfidenceMap2keypoint = YesTF_maxKP_DetectionConfidenceMap2keypoint()
-            DetectionMap, keypoints, zeta, tf_DetectionMap, tf_keypoints = fn_DetectionConfidenceMap2keypoint(combined_hm_preds, tf_combined_hm_preds)
+            DetectionMap, keypoints, zeta, tf_DetectionMap, tf_keypoints = fn_DetectionConfidenceMap2keypoint(combined_hm_preds, tf_combined_hm_preds, tf_corner_P)
+
+            #fn_save_kpimg = saveKPimg()
+            #fn_save_kpimg(kp_img, keypoints, epoch + 1, cur_filename)
+
+            #fn_save_tfkpimg = savetfKPimg()
+            #fn_save_tfkpimg(tf_aefe_input, tf_keypoints, epoch + 1, cur_filename)
 
             fn_loss_cosim = loss_cosim(DetectionMap, tf_DetectionMap).cuda()
             cur_cosim_loss = fn_loss_cosim()
 
             fn_softmask = create_softmask()
             softmask = fn_softmask(DetectionMap, zeta)  # (b,k,96,128)
-            #softmask_min = torch.min(torch.min(softmask, dim=2)[0], dim=2)[0]
-            #softmask_max = torch.max(torch.max(softmask, dim=2)[0], dim=2)[0]
-            #softmask_my_max_min = torch.cat([softmask_min.unsqueeze(2), softmask_max.unsqueeze(2)], dim=2)  # (b,k,2,1) 2: min, max
-            #softmask = (softmask - softmask_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)) / softmask_my_max_min[:, :, 1].unsqueeze(2).unsqueeze(3)
-            softmask = F.normalize(softmask, p=2, dim=1)
-
+            softmask_min = torch.min(torch.min(softmask, dim=2)[0], dim=2)[0]
+            softmask_max = torch.max(torch.max(softmask, dim=2)[0], dim=2)[0]
+            softmask_my_max_min = torch.cat([softmask_min.unsqueeze(2), softmask_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
+            softmask = (softmask - (softmask_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((softmask_my_max_min[:, :, 1] - softmask_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
+            #softmask = F.normalize(softmask, p=2, dim=1)
 
             fn_loss_concentration_Rk = loss_concentration(combined_hm_preds).cuda()
             fn_loss_concentration_softmask = loss_concentration(softmask).cuda()
             fn_loss_separation = loss_separation(keypoints).cuda()
 
-            fn_loss_transformation = loss_transformation(theta, keypoints, tf_keypoints, cur_batch, num_of_kp).cuda()
+            fn_loss_transformation = loss_transformation(theta, keypoints, tf_keypoints, cur_batch, num_of_kp, my_width, my_height).cuda()
             cur_transf_loss = fn_loss_transformation()
 
             cur_conc_loss = fn_loss_concentration_Rk() + fn_loss_concentration_softmask()
+            #cur_conc_loss = fn_loss_concentration_Rk()
             cur_sep_loss = fn_loss_separation()
 
             fn_relu = torch.nn.ReLU().cuda()
@@ -176,20 +202,25 @@ def train():
             Wk_ = model_feature_descriptor(Wk_rsz) #(b, k, h*w) -> (b,k,f)
             #mul_all_torch = (softmask*fn_relu(combined_hm_preds)).sum(dim=[2, 3]).unsqueeze(2)
             mul_all_torch = (softmask*combined_hm_preds).sum(dim=[2, 3]).unsqueeze(2)
-            my_descriptor = (mul_all_torch * leakyrelu4descriptors(Wk_)) #(b, k, f)
+            my_descriptor = (mul_all_torch * fn_relu(Wk_)) #(b, k, f)
             #print("descriptor time", time.time() - start4)
 
             ##########################################DECODER##########################################
             reconScoreMap = model_score_map(keypoints, DetectionMap)
 
-            reconDetectionMap = F.softplus(reconScoreMap)
-            reconDetectionMap = F.normalize(reconDetectionMap, p=2, dim=1)
+            #reconDetectionMap = F.softplus(reconScoreMap)
+            #reconDetectionMap = F.normalize(reconDetectionMap, p=2, dim=1)
+            reconDetection_min = torch.min(torch.min(reconScoreMap, dim=2)[0], dim=2)[0]
+            reconDetection_max = torch.max(torch.max(reconScoreMap, dim=2)[0], dim=2)[0]
+            reconDetection_my_max_min = torch.cat([reconDetection_min.unsqueeze(2), reconDetection_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
+            reconDetectionMap = (reconScoreMap - (reconDetection_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((reconDetection_my_max_min[:, :, 1] - reconDetection_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
 
             cur_detection_loss = F.mse_loss(DetectionMap, reconDetectionMap)
 
             til_Wk = model_dec_feature_descriptor(my_descriptor) #(b, 16, feature_dimension)
             dec_Wk = til_Wk.view(Wk_raw.shape[0], Wk_raw.shape[1], Wk_raw.shape[2], Wk_raw.shape[3])
-            dec_Wk = F.softplus(dec_Wk) #changed: relu -> softplus
+            #dec_Wk = F.softplus(dec_Wk) #changed: relu -> softplus
+            dec_Wk = F.relu(dec_Wk)  # changed: relu -> softplus
             reconFeatureMap = dec_Wk * reconDetectionMap
 
             concat_recon = torch.cat((reconDetectionMap, reconFeatureMap), 1) #(b, 2n, 96, 128) channel-wise concatenation
@@ -200,13 +231,13 @@ def train():
 
             cur_descriptorW_loss = F.mse_loss(Wk_raw, dec_Wk)
 
-            param_loss_con = 0.01
+            param_loss_con = 1.0
             param_loss_sep = 1.0 #1e-2 #1.0
             param_loss_recon = 10.0
-            param_loss_transf = 1e-4
-            param_loss_detecionmap = 30.0 #10.0
+            param_loss_transf = 1e-2
+            param_loss_detecionmap = 100.0 #10.0
             param_loss_descriptorW = 1.0
-            param_loss_cosim = 1.0
+            param_loss_cosim = 2e-5
 
             #loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_transf * cur_transf_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
             #loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
@@ -216,8 +247,8 @@ def train():
             #loss = loss.cuda()
             #loss = 1000.0 * cur_conc_loss.cuda() + 1.0 * cur_sep_loss.cuda() + 1.0 * cur_recon_loss.cuda()
 
-            print("concentration loss: ", param_loss_con * cur_conc_loss.item(), ",", "separation loss: ", param_loss_sep * cur_sep_loss.item(), ",", "cur_recon_loss: ", param_loss_recon * cur_recon_loss.item(),",", "transformation_loss: ", param_loss_transf * cur_transf_loss.item(),
-                  ",", "detection map loss", param_loss_detecionmap * cur_detection_loss.cuda().item(), ",", "descriptorW_loss", param_loss_descriptorW * cur_descriptorW_loss.item(), ",", "Cosim_loss", param_loss_cosim * cur_cosim_loss.item())
+            print("concentration loss: ", param_loss_con * cur_conc_loss.item(), ",", "separation loss: ", param_loss_sep * cur_sep_loss.item(), ",", "cur_recon_loss: ", param_loss_recon * cur_recon_loss.item(),
+                  ",", "transformation_loss: ", param_loss_transf * cur_transf_loss.item(), ",", "detection map loss", param_loss_detecionmap * cur_detection_loss.cuda().item(), ",", "descriptorW_loss", param_loss_descriptorW * cur_descriptorW_loss.item(), ",", "Cosim_loss", param_loss_cosim * cur_cosim_loss.item())
 
             # ================Backward================
             optimizer_L2.zero_grad()
@@ -247,17 +278,21 @@ def train():
             if (((epoch+1) % 5 == 0) or (epoch==0) or (epoch+1==num_epochs)):
                 fn_save_kpimg = saveKPimg()
                 fn_save_kpimg(kp_img, keypoints, epoch+1, cur_filename)
+                fn_save_tfkpimg = savetfKPimg()
+                fn_save_tfkpimg(tf_aefe_input, tf_keypoints, epoch + 1, cur_filename)
                 img_save_filename = ("SaveReconstructedImg/recon_%s_epoch_%s.jpg" % (cur_filename, epoch+1))
                 save_image(reconImg, img_save_filename)
                 if(epoch != 0):
                     torch.save({
-                                'model_StackedHourglassForKP': model_L2net.module.state_dict(),
+                                #'model_StackedHourglassForKP': model_L2net.module.state_dict(),
+                                'model_L2net': model_L2net.module.state_dict(),
                                 'model_feature_descriptor': model_feature_descriptor.module.state_dict(),
                                 'model_score_map': model_score_map.module.state_dict(),
                                 'model_dec_feature_descriptor': model_dec_feature_descriptor.module.state_dict(),
                                 'model_StackedHourglassImgRecon': model_StackedHourglassImgRecon.module.state_dict(),
 
-                                'optimizer_StackedHourglass_kp': optimizer_L2.state_dict(),
+                                #'optimizer_StackedHourglass_kp': optimizer_L2.state_dict(),
+                                'optimizer_L2': optimizer_L2.state_dict(),
                                 'optimizer_Wk_': optimizer_Wk_.state_dict(),
                                 'optimizer_decfeatureDescriptor': optimizer_decfeatureDescriptor.state_dict(),
                                 'optimizer_ImgRecon': optimizer_ImgRecon.state_dict(),
@@ -287,6 +322,8 @@ if __name__ == '__main__':
     torch.cuda.empty_cache()
     if not os.path.exists("SaveKPImg"):
         os.makedirs("SaveKPImg")
+    if not os.path.exists("SavetfKPImg"):
+        os.makedirs("SavetfKPImg")
     if not os.path.exists("SaveReconstructedImg"):
         os.makedirs("SaveReconstructedImg")
     if not os.path.exists("SaveHeatMapImg"):

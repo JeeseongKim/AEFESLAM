@@ -30,7 +30,7 @@ class GenHeatmap(nn.Module):
         self.conv128_128_1 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=2, stride=1, padding=1, dilation=2, bias=True)
         self.conv128_128_2 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=2, stride=1, padding=1, dilation=2, bias=True)
         self.conv128_128_3 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=2, stride=1, padding=1, dilation=2, bias=True)
-        self.conv128_numKP = nn.Conv2d(in_channels=128, out_channels=num_of_kp, kernel_size=1, stride=1, padding=0, dilation=1, bias=True)
+        #self.conv128_numKP = nn.Conv2d(in_channels=128, out_channels=num_of_kp, kernel_size=1, stride=1, padding=0, dilation=1, bias=True)
 
     def forward(self, aefe_input):
         img = aefe_input
@@ -43,7 +43,7 @@ class GenHeatmap(nn.Module):
         out = self.conv128_128_1(out)
         out = self.conv128_128_2(out)
         out = self.conv128_128_3(out)
-        out = self.conv128_numKP(out)
+        #out = self.conv128_numKP(out)
 
         return out
 

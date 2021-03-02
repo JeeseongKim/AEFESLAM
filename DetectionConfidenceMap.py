@@ -4,6 +4,7 @@ import numpy as np
 import time
 from model.layers import Conv, Residual
 import torch.nn.functional as F
+import math
 
 class DetectionConfidenceMap2keypoint(nn.Module):
     def __init__(self):
@@ -170,26 +171,36 @@ class YesTF_maxKP_DetectionConfidenceMap2keypoint(nn.Module):
     def __init__(self):
         super(YesTF_maxKP_DetectionConfidenceMap2keypoint, self).__init__()
 
-    def forward(self, combined_hm_preds, tf_combined_hm_preds):
+    def forward(self, combined_hm_preds, tf_combined_hm_preds, tf_corner_P):
         _, inp_channel, img_height, img_width = combined_hm_preds.shape
 
         R_k = combined_hm_preds  # scoremap
         tf_R_k = tf_combined_hm_preds  # scoremap (transformed)
 
-        map_val_all = F.normalize(R_k, p=2, dim=1)
-        tf_map_val_all = F.normalize(tf_R_k, p=2, dim=1)
+        #map_val_all = F.normalize(R_k, p=2, dim=1)
+        #tf_map_val_all = F.normalize(tf_R_k, p=2, dim=1)
+
+        Dk_min = torch.min(torch.min(R_k, dim=2)[0], dim=2)[0]
+        Dk_max = torch.max(torch.max(R_k, dim=2)[0], dim=2)[0]
+        my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
+        map_val_all = (R_k - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/((my_max_min[:, :, 1]-my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
+
+        tf_Dk_min = torch.min(torch.min(tf_R_k, dim=2)[0], dim=2)[0]
+        tf_Dk_max = torch.max(torch.max(tf_R_k, dim=2)[0], dim=2)[0]
+        tf_my_max_min = torch.cat([tf_Dk_min.unsqueeze(2), tf_Dk_max.unsqueeze(2)], dim=2) #(b,k,2) 2: min, max
+        tf_map_val_all = (tf_R_k - (tf_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3)))/((tf_my_max_min[:, :, 1]-tf_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
 
         get_zeta = map_val_all.sum([2, 3])  # (b, k)
         #tf_get_zeta = tf_map_val_all.sum([2, 3])  # (b, k)
 
         my_col = torch.argmax(torch.max(map_val_all, dim=2)[0], dim=2)
         my_row = torch.argmax(torch.max(map_val_all, dim=3)[0], dim=2)
-        keypoint = torch.cat([my_row.unsqueeze(2), my_col.unsqueeze(2)], dim=2)
+        keypoint = torch.cat([my_col.unsqueeze(2), my_row.unsqueeze(2)], dim=2)
         keypoint = keypoint.to(torch.float)
 
         tf_my_col = torch.argmax(torch.max(tf_map_val_all, dim=2)[0], dim=2)
         tf_my_row = torch.argmax(torch.max(tf_map_val_all, dim=3)[0], dim=2)
-        tf_keypoint = torch.cat([tf_my_row.unsqueeze(2), tf_my_col.unsqueeze(2)], dim=2)
+        tf_keypoint = torch.cat([tf_my_col.unsqueeze(2), tf_my_row.unsqueeze(2)], dim=2)
         tf_keypoint = tf_keypoint.to(torch.float)
 
         return map_val_all, keypoint, get_zeta, tf_map_val_all, tf_keypoint
