@@ -32,7 +32,7 @@ class loss_separation(nn.Module):
         super(loss_separation, self).__init__()
         sep_loss = 0
         kp_sz_0, kp_sz_1, _ = keypoints.shape
-        #self. scale_param = 2e-9 #1e-9
+        self. scale_param = 0.0001#1e-9
         #scale_param = 1e-3
 
         for i in range(kp_sz_1):
@@ -41,37 +41,55 @@ class loss_separation(nn.Module):
             #sep_loss = sep_loss + torch.exp(-1 * self. scale_param * cur_loss)
             sep_loss = sep_loss + cur_loss
 
-        #self.sep_loss_output = torch.exp(-1 * self. scale_param * sep_loss)
+        self.sep_loss_output = torch.exp(-1 * self. scale_param * sep_loss)
         #self.sep_loss_output = 200/sep_loss
         #self.sep_loss_output = sep_loss
-        self.sep_loss_output = (1+torch.tanh(1e-5*sep_loss))*(1-torch.tanh(1e-5*sep_loss))
+        #self.sep_loss_output = (1+torch.tanh(1e-5*sep_loss))*(1-torch.tanh(1e-5*sep_loss))
         #self.sep_loss_output = (1-sep_loss)
 
     def forward(self):
         return self.sep_loss_output
 
 class loss_transformation(nn.Module):
-    def __init__(self, theta, keypoints, tf_keypoints, cur_batch, num_of_kp):
+    def __init__(self, theta, keypoints, tf_keypoints, cur_batch, num_of_kp, my_width, my_height):
         super(loss_transformation, self).__init__()
 
         make_transformation = make_transformation_M()
         my_tfMatrix = make_transformation(theta, 0, 0)
 
         all_kp = torch.zeros(cur_batch, 4, num_of_kp)
-        all_kp[:, 0, :] = keypoints[:, :, 0]
-        all_kp[:, 1, :] = keypoints[:, :, 1]
+        all_kp[:, 0, :] = keypoints[:, :, 0] - (0.5 * my_width)
+        all_kp[:, 1, :] = -keypoints[:, :, 1] + (0.5 * my_height)
         all_kp[:, 3, :] = 1.0
 
         cal_tf_keypoint = torch.matmul(my_tfMatrix, all_kp)
+        cal_tf_keypoint = torch.tensor(cal_tf_keypoint, dtype=torch.int64)
         cal_tf_keypoint = cal_tf_keypoint[:, 0:2, :] #(b, 2, k)
 
+        get_my_tf_keypoint = cal_tf_keypoint.permute(0, 2, 1)
+        '''
         get_my_tf_keypoint = torch.zeros_like(tf_keypoints) #(b,k,2)
-        get_my_tf_keypoint[:, 0, :] = cal_tf_keypoint[:, :, 0]
-
         for i in range(num_of_kp):
             get_my_tf_keypoint[:, i, :] = cal_tf_keypoint[:, :, i]
-
-        self.transf_loss = F.mse_loss(tf_keypoints, get_my_tf_keypoint)
+        '''
+        o_tf_keypoints = torch.zeros_like(tf_keypoints)
+        o_tf_keypoints[:, :, 0] = tf_keypoints[:, :, 0] - (0.5 * my_width)
+        o_tf_keypoints[:, :, 1] = -tf_keypoints[:, :, 1] + (0.5 * my_height)
+        '''
+        for b in range(cur_batch):
+            for k in range(num_of_kp):
+                tf_x = get_my_tf_keypoint[b, k, 0]
+                tf_y = get_my_tf_keypoint[b, k, 1]
+                if ((tf_x < (-0.5 * my_width)) or (tf_x > (0.5 * my_width)) or (tf_y < (-0.5*my_height)) or (tf_y > (0.5*my_height))):
+                    o_tf_keypoints[b, k, :] = 0
+                    get_my_tf_keypoint[b, k, :] = 0
+        '''
+        '''
+        if ((tf_keypoints[:, :, 0] < (-0.5 * my_width)) or (tf_keypoints[:, :, 0] > (0.5 * my_width)) or (tf_keypoints[:, :, 1] < (0.5*my_height)) or (tf_keypoints[:, :, 1] > (0.5*my_height))):
+            tf_keypoints[:, :, :] = 0
+            get_my_tf_keypoint[:, :, :] = 0
+        '''
+        self.transf_loss = F.mse_loss(o_tf_keypoints, get_my_tf_keypoint.cuda())
 
     def forward(self):
         return self.transf_loss
@@ -80,7 +98,7 @@ class loss_cosim(nn.Module):
     def __init__(self, DetectionMap, tf_DetectionMap):
         super(loss_cosim, self).__init__()
         cosim = torch.nn.CosineSimilarity(dim=1, eps=1e-8)
-        self.cosim_loss = cosim(DetectionMap, tf_DetectionMap)
+        self.cosim_loss = torch.sum(cosim(DetectionMap, tf_DetectionMap))
 
     def forward(self):
         return self.cosim_loss

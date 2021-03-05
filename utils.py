@@ -47,8 +47,8 @@ class my_dataset(Dataset):
         self.input_width = my_width
         #lg dataset(96,128))
 
-        for filename in (sorted(glob.glob('./Kitti/sequences/00/image_3/*.png'))):
-        #for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('./Kitti/sequences/00/image_2/*.png'))):
+        for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./Kitti_tmp/sequences/00/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./data/*.jpg'))):
             im = Image.open(filename)

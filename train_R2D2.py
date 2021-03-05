@@ -24,6 +24,7 @@ warnings.filterwarnings("ignore")
 from torch.utils.data import TensorDataset, DataLoader
 
 import visdom
+
 vis = visdom.Visdom()
 
 plot_all = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='All Loss'))
@@ -38,10 +39,7 @@ plot_weightW = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(titl
 
 torch.multiprocessing.set_start_method('spawn', force=True)
 #########################################parameter#########################################
-h0 = 480
-w0 = 640
-
-num_of_kp = 128 #200
+num_of_kp = 2000
 feature_dimension = 32
 
 my_width = 160 #272 #96 #272 #208
@@ -50,7 +48,7 @@ my_height = 48 #80 #32 #80 #64
 input_width = my_width
 
 num_epochs = 1000
-batch_size = 1
+batch_size = 8
 
 stacked_hourglass_inpdim_kp = input_width
 stacked_hourglass_oupdim_kp = num_of_kp #number of my keypoints
@@ -71,7 +69,7 @@ def train():
     #optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=1e-3, weight_decay=2e-4)
     #optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    model_L2net = GenHeatmap(num_of_kp=num_of_kp)
+    model_L2net = L2net_R2D2(num_of_kp=num_of_kp)
     model_L2net = nn.DataParallel(model_L2net).cuda()
     optimizer_L2 = torch.optim.AdamW(model_L2net.parameters(),  lr=learning_rate, weight_decay=weight_decay)
 
@@ -138,33 +136,16 @@ def train():
             aefe_input = input_img.cuda() #(b, 3, height, width)
             cur_batch = aefe_input.shape[0]
             ##########################################ENCODER##########################################
-            theta = random.uniform(-60, 60)
+            theta = random.uniform(-5, 5)
             #TFmatrix = make_transformation_M(theta, 0, 0)
             my_transform = torchvision.transforms.RandomAffine(degrees=(theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input) #randomly rotated image
 
-            rotation_R = torch.zeros(2, 2)
-            rotation_R[0, 0] = math.cos(theta)
-            rotation_R[0, 1] = -math.sin(theta)
-            rotation_R[1, 0] = math.sin(theta)
-            rotation_R[1, 1] = math.cos(theta)
-
-            corner_P = torch.zeros(2, 4)
-            corner_P[0, 0] = -0.5*my_width
-            corner_P[0, 1] = -0.5*my_width
-            corner_P[0, 2] = 0.5*my_width
-            corner_P[0, 3] = 0.5*my_width
-            corner_P[1, 0] = 0.5*my_height
-            corner_P[1, 1] = -0.5*my_height
-            corner_P[1, 2] = 0.5*my_height
-            corner_P[1, 3] = -0.5*my_height
-            tf_corner_P = torch.matmul(rotation_R, corner_P)
-
             combined_hm_preds = model_L2net(aefe_input)
             tf_combined_hm_preds = model_L2net(tf_aefe_input)
 
-            fn_DetectionConfidenceMap2keypoint = YesTF_maxKP_DetectionConfidenceMap2keypoint()
-            DetectionMap, keypoints, zeta, tf_DetectionMap, tf_keypoints = fn_DetectionConfidenceMap2keypoint(combined_hm_preds, tf_combined_hm_preds, tf_corner_P)
+            fn_DetectionConfidenceMap2keypoint = YesTF_GradKP_DetectionConfidenceMap2keypoint()
+            DetectionMap, keypoints, zeta, tf_DetectionMap, tf_keypoints = fn_DetectionConfidenceMap2keypoint(combined_hm_preds, tf_combined_hm_preds)
 
             #fn_save_kpimg = saveKPimg()
             #fn_save_kpimg(kp_img, keypoints, epoch + 1, cur_filename)
@@ -231,19 +212,19 @@ def train():
 
             cur_descriptorW_loss = F.mse_loss(Wk_raw, dec_Wk)
 
-            param_loss_con = 1.0
+            param_loss_con = 0.1
             param_loss_sep = 1.0 #1e-2 #1.0
-            param_loss_recon = 10.0
-            param_loss_transf = 1e-2
-            param_loss_detecionmap = 100.0 #10.0
-            param_loss_descriptorW = 1.0
+            param_loss_recon = 5.0
+            param_loss_transf = 1e-1
+            param_loss_detecionmap = 10.0 #10.0
+            param_loss_descriptorW = 0.3
             param_loss_cosim = 2e-5
 
             #loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_transf * cur_transf_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
             #loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda()
             #loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda() + param_loss_score * cur_score_loss.cuda(0)
             loss = param_loss_con * cur_conc_loss.cuda() + param_loss_sep * cur_sep_loss.cuda() + param_loss_recon * cur_recon_loss.cuda() + param_loss_transf * cur_transf_loss.cuda() + param_loss_detecionmap * cur_detection_loss.cuda() + param_loss_descriptorW * cur_descriptorW_loss.cuda() + param_loss_cosim * cur_cosim_loss.cuda()
-
+            #loss = torch.tensor(loss, dtype=float, requires_grad=True)
             #loss = loss.cuda()
             #loss = 1000.0 * cur_conc_loss.cuda() + 1.0 * cur_sep_loss.cuda() + 1.0 * cur_recon_loss.cuda()
 
