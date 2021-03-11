@@ -74,7 +74,7 @@ def train():
     #optimizer_reconDetection = torch.optim.Adam(model_score_map.parameters(), lr=learning_rate, weight_decay=weight_decay)
     optimizer_reconDetectionkp = torch.optim.AdamW(model_detection_map_kp.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    model_detection_map_f = ReconDetectionMapWithF(img_width=my_width, img_height=my_height)
+    model_detection_map_f = ReconDetectionMapWithF(img_width=my_width, img_height=my_height, feature_dimension=feature_dimension)
     model_detection_map_f = nn.DataParallel(model_detection_map_f).cuda()
     #optimizer_reconDetection = torch.optim.Adam(model_score_map.parameters(), lr=learning_rate, weight_decay=weight_decay)
     optimizer_reconDetectionf = torch.optim.AdamW(model_detection_map_f.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -116,24 +116,32 @@ def train():
         running_cosim_loss = 0
 
         for i, data in enumerate(tqdm(train_loader)):
+            time0 = time.time()
             input_img, cur_filename, kp_img = data
 
             aefe_input = input_img.cuda() #(b, 3, height, width)
             cur_batch = aefe_input.shape[0]
-
+            #print("Data loading", time.time() - time0)
             ##########################################ENCODER##########################################
+            time1 = time.time()
             theta = random.uniform(-5, 5) #rotating theta
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input) #randomly rotated image
+            #print("TF", time.time() - time1)
 
+            time2 = time.time()
             Rk = model_StackedHourglassForKP(aefe_input).sum(dim=1)
             tf_Rk = model_StackedHourglassForKP(tf_aefe_input).sum(dim=1)
+            #print("Heatmap", time.time() - time2)
 
             #keypoint extraction
+            time3 = time.time()
             fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
             Dk, kp, zeta, tf_Dk, tf_kp = fn_DetectionConfidenceMap2keypoint(Rk, tf_Rk, cur_batch)
+            #print("KP extract", time.time()-time3)
 
             #similarity loss btw Dk and tf_Dk
+            time4 = time.time()
             fn_loss_cosim = loss_cosim(Dk, tf_Dk).cuda()
             cur_cosim_loss = fn_loss_cosim()
             #separation loss btw extracted kp
@@ -142,11 +150,16 @@ def train():
             #tf loss btw kp tf_kp
             fn_loss_transformation = loss_transformation(theta, kp, tf_kp, cur_batch, num_of_kp, my_width, my_height).cuda()
             cur_transf_loss = fn_loss_transformation()
+            #print("loss time", time.time() - time4)
 
             #descriptor generation
+            time5 = time.time()
             fk = model_descriptor_map(Rk) #(b,k,f)
-
+            my_relu = torch.nn.ReLU()
+            fk = my_relu(fk)
+            #print("descriptor", time.time()-time5)
             ##########################################DECODER##########################################
+            time6 = time.time()
             #recon Rk with kp
             reconRk_kp = model_detection_map_kp(kp)
             #reconDk_kp normalization
@@ -154,7 +167,9 @@ def train():
             reconDk_kp_max = torch.max(torch.max(reconRk_kp, dim=2)[0], dim=2)[0]
             reconDk_kp_my_max_min = torch.cat([reconDk_kp_min.unsqueeze(2), reconDk_kp_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
             reconDk_kp = (reconRk_kp - (reconDk_kp_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((reconDk_kp_my_max_min[:, :, 1] - reconDk_kp_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
+            #print("recon kp", time.time()-time6)
 
+            time7 = time.time()
             #reconRk with f
             reconRk_f = model_detection_map_f(fk)
             # reconDk_f normalization
@@ -162,45 +177,62 @@ def train():
             reconDk_f_max = torch.max(torch.max(reconRk_f, dim=2)[0], dim=2)[0]
             reconDk_f_my_max_min = torch.cat([reconDk_f_min.unsqueeze(2), reconDk_f_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
             reconDk_f = (reconRk_f - (reconDk_f_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((reconDk_f_my_max_min[:, :, 1] - reconDk_f_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
+            #print("recon f", time.time()-time7)
 
             #triplet loss
-            cur_dk_loss = torch.nn.TripletMarginWithDistanceLoss(Dk, reconDk_kp, reconDk_f)
+            time8 = time.time()
+            triplet_loss = torch.nn.TripletMarginWithDistanceLoss(reduction='sum')
+            cur_dk_loss = triplet_loss(Dk, reconDk_kp, reconDk_f)
+            #print("Triplet loss", time.time() - time8)
 
+            time9 = time.time()
             concat_recon = torch.cat((reconDk_kp, reconDk_f), 1)  # (b, 2k, h, w) channel-wise concatenation
             reconImg = model_StackedHourglassImgRecon(concat_recon)  # (b, 8, 3, h,  w)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
+            #print("imt recon", time.time()-time9)
 
-            cur_recon_loss = F.mse_loss(reconImg, aefe_input.detach())
-            
+            time10 = time.time()
+            cur_recon_loss = F.mse_loss(reconImg, aefe_input)
+            #cur_recon_loss = F.mse_loss(reconImg, aefe_input)
+            #print("recon loss", time.time()-time10)
+
+            time11 = time.time()
             param_loss_sep = 1.0
             param_loss_recon = 5.0
             param_loss_transf = 1e-1
-            param_loss_dk = 10.0  # 10.0
+            param_loss_dk = 500.0  # 10.0
             param_loss_cosim = 2e-5
 
-            my_sep_loss = param_loss_sep * cur_sep_loss.cuda()
-            my_cosim_loss = param_loss_cosim * cur_cosim_loss.cuda()
-            my_transf_loss = param_loss_transf * cur_transf_loss.cuda()
-            my_dk_loss = param_loss_dk * cur_dk_loss.cuda()
-            my_recon_loss = param_loss_recon * cur_recon_loss.cuda()
-            loss =  my_sep_loss + my_cosim_loss + my_transf_loss + my_dk_loss + my_recon_loss
+            my_sep_loss = param_loss_sep * cur_sep_loss
+            my_cosim_loss = param_loss_cosim * cur_cosim_loss
+            my_transf_loss = param_loss_transf * cur_transf_loss
+            my_dk_loss = param_loss_dk * cur_dk_loss
+            my_recon_loss = param_loss_recon * cur_recon_loss
 
-            print("Sep: ", my_sep_loss, ", Cosim: ", my_cosim_loss, ", Trans: ", my_transf_loss, ", Dk: ", my_dk_loss, ", Recon:", my_recon_loss)
+            loss = my_sep_loss + my_cosim_loss + my_transf_loss + my_dk_loss + my_recon_loss
 
+            print("Sep: ", my_sep_loss.item(), ", Cosim: ", my_cosim_loss.item(), ", Trans: ", my_transf_loss.item(), ", Dk: ", my_dk_loss.item(), ", Recon:", my_recon_loss.item())
+            #print("loss compute", time.time() - time11)
             # ================Backward================
+            time12 = time.time()
             optimizer_StackedHourglass_kp.zero_grad()
             optimizer_descriptor_map.zero_grad()
             optimizer_reconDetectionkp.zero_grad()
             optimizer_reconDetectionf.zero_grad()
             optimizer_ImgRecon.zero_grad()
+            #print("optimizer_zero_Grad", time.time() - time12)
 
+            time13 = time.time()
             loss.backward()
+            #print("loss backward", time.time() - time13)
 
+            time14 = time.time()
             optimizer_StackedHourglass_kp.step()
             optimizer_descriptor_map.step()
             optimizer_reconDetectionkp.step()
             optimizer_reconDetectionf.step()
             optimizer_ImgRecon.step()
+            #print("optimizer_step", time.time()-time14)
 
             running_loss = running_loss + loss.item()
             running_recon_loss = running_recon_loss + my_recon_loss.item()

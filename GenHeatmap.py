@@ -31,6 +31,8 @@ class L2net_R2D2(nn.Module):
         self.conv128_128_2 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=2, stride=1, padding=1, dilation=2, bias=True)
         self.conv128_128_3 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=2, stride=1, padding=1, dilation=2, bias=True)
         self.conv128_2 = nn.Conv2d(in_channels=128, out_channels=2, kernel_size=1, stride=1, padding=0, dilation=1, bias=True)
+        self.conv2_1_Rel = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1, padding=0, dilation=1, bias=True)
+        self.conv2_1_Rep = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=1, stride=1, padding=0, dilation=1, bias=True) #hatmap
 
     def forward(self, aefe_input):
         img = aefe_input
@@ -43,10 +45,7 @@ class L2net_R2D2(nn.Module):
         out = self.conv128_128_1(out)
         out = self.conv128_128_2(out)
         out = self.conv128_128_3(out)
-        out = torch.square(out)
-        out = self.conv128_2(out)
-        out = torch.softmax(out)
-
+        out = torch.norm(out, dim=2)
 
         return out
 

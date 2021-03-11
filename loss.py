@@ -53,7 +53,7 @@ class loss_separation(nn.Module):
 class loss_transformation(nn.Module):
     def __init__(self, theta, keypoints, tf_keypoints, cur_batch, num_of_kp, my_width, my_height):
         super(loss_transformation, self).__init__()
-
+        tf_keypoints = tf_keypoints.cuda()
         make_transformation = make_transformation_M()
         my_tfMatrix = make_transformation(theta, 0, 0)
 
@@ -63,10 +63,10 @@ class loss_transformation(nn.Module):
         all_kp[:, 3, :] = 1.0
 
         cal_tf_keypoint = torch.matmul(my_tfMatrix, all_kp)
-        cal_tf_keypoint = torch.tensor(cal_tf_keypoint, dtype=torch.int64)
+        cal_tf_keypoint = torch.round(cal_tf_keypoint).float()
         cal_tf_keypoint = cal_tf_keypoint[:, 0:2, :] #(b, 2, k)
 
-        get_my_tf_keypoint = cal_tf_keypoint.permute(0, 2, 1)
+        get_my_tf_keypoint = cal_tf_keypoint.permute(0, 2, 1).cuda()
         '''
         get_my_tf_keypoint = torch.zeros_like(tf_keypoints) #(b,k,2)
         for i in range(num_of_kp):
@@ -89,7 +89,8 @@ class loss_transformation(nn.Module):
             tf_keypoints[:, :, :] = 0
             get_my_tf_keypoint[:, :, :] = 0
         '''
-        self.transf_loss = F.mse_loss(o_tf_keypoints, get_my_tf_keypoint.cuda())
+        self.my_transf_loss = F.mse_loss(o_tf_keypoints, get_my_tf_keypoint)
+        self.transf_loss = self.my_transf_loss
 
     def forward(self):
         return self.transf_loss
