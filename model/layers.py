@@ -118,33 +118,19 @@ class Linear(nn.Module):
     def __init__(self, img_width, img_height, feature_dimension):
         super(Linear, self).__init__()
         self.linear = torch.nn.Linear(img_width*img_height, feature_dimension)
-        #self.linear_start_1024 = torch.nn.Linear(img_width*img_height, 1024)
-        #self.linear_1024_512 = torch.nn.Linear(1024, 512)
-        #self.linear_512_end = torch.nn.Linear(512, feature_dimension)
 
     def forward(self, input):
         self.linear.apply(weights_init)
-
-        #out = self.linear_start_1024(input)
-        #out = self.linear_1024_512(out)
-        #out = self.linear_512_end(out)
-
         return self.linear(input)
-        #return out
+
 
 class dec_Linear(nn.Module):
     def __init__(self, feature_dimension, img_width, img_height):
         super(dec_Linear, self).__init__()
         self.linear_dec = torch.nn.Linear(feature_dimension, img_width * img_height)
-        #self.linear_feature_dimension_1024 = torch.nn.Linear(feature_dimension, 1024)
-        #self.linear_1024_8192 = torch.nn.Linear(1024, 8192)
-        #self.linear_8192_end = torch.nn.Linear(8192, img_width * img_height)
 
     def forward(self, input):
         self.linear_dec.apply(weights_init)
-        #out = self.linear_feature_dimension_1024(input)
-        #out = self.linear_1024_8192(out)
-        #out = self.linear_8192_end(out)
         return self.linear_dec(input)
         #return out
 

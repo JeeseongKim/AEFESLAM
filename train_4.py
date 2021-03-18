@@ -72,6 +72,7 @@ def train():
     optimizer_Wk_ = torch.optim.AdamW(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
 
     #model_detection_map_kp = ReconDetectionMapWithKP_Res(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
+    #model_detection_map_kp = ReconDetectionMapWithKP_3kp(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
     model_detection_map_kp = ReconDetectionMapWithKP(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
     model_detection_map_kp = nn.DataParallel(model_detection_map_kp).cuda()
     optimizer_reconDetectionkp = torch.optim.AdamW(model_detection_map_kp.parameters(), lr=learning_rate,weight_decay=weight_decay)
@@ -127,21 +128,18 @@ def train():
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
 
-            #Rk = model_StackedHourglassForKP(aefe_input).sum(dim=1)
-            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input).sum(dim=1)
-
             Rk = model_StackedHourglassForKP(aefe_input)[:, num_nstack - 1, :, :, :]
             tf_Rk = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack-1, :, :, :]
 
             # keypoint extraction
+            #fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint_2(my_width, my_height)
             fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
-            Dk, kp, zeta, tf_Dk, tf_kp = fn_DetectionConfidenceMap2keypoint(Rk.clone(), tf_Rk, my_height, my_width) #num_of_kp = 2*num_of_kp
-            kp = kp.float()
-            tf_kp = tf_kp.float()
+            Dk, tf_Dk, kp, tf_kp, zeta, tf_zeta = fn_DetectionConfidenceMap2keypoint(Rk.clone(), tf_Rk, my_height, my_width) #num_of_kp = 2*num_of_kp
 
             #softmask
             fn_softmask = create_softmask()
             softmask = fn_softmask(Dk, zeta)  # (b,k,96,128)
+            tf_softmask = fn_softmask(tf_Dk, zeta)  # (b,k,96,128)
 
             # descriptor generation
             Wk_cal = Rk * Dk  # (b,k,h,w)
@@ -149,6 +147,19 @@ def train():
             fk_pre = model_feature_descriptor(Wk)  # (b, k, h*w) -> (b,k,f)
             ww = (softmask * Rk).sum(dim=[2, 3]).unsqueeze(2)
             fk = (ww * F.relu(fk_pre))  # (b, k, f)
+
+            tf_Wk_cal = tf_Rk * tf_Dk  # (b,k,h,w)
+            tf_Wk = tf_Wk_cal.view(cur_batch, num_of_kp, my_height * my_width)  # (b,k,h*w)
+            tf_fk_pre = model_feature_descriptor(tf_Wk)  # (b, k, h*w) -> (b,k,f)
+            tf_ww = (tf_softmask * tf_Rk).sum(dim=[2, 3]).unsqueeze(2)
+            tf_fk = (tf_ww * F.relu(tf_fk_pre))  # (b, k, f)
+
+            my_feature = torch.cat([kp, fk], dim=2)
+            my_tf_feature = torch.cat([tf_kp, tf_fk], dim=2)
+
+            #feature matching loss
+            #fn_matching_loss = loss_matching(theta, my_feature, my_tf_feature, cur_batch, num_of_kp, my_width, my_height)
+            #cur_matching_loss = fn_matching_loss().cuda()
 
             #concentration loss
             Rk_con_loss = loss_concentration(Rk).cuda()
