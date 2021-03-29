@@ -8,19 +8,19 @@ import torch.nn.functional as F
 from utils import my_dataset, saveKPimg, make_transformation_M
 import numpy as np
 import pdb
+from DetectionConfidenceMap import *
 
 class loss_concentration(nn.Module):
     def __init__(self, my_map):
         super(loss_concentration, self).__init__()
         dmap_sz_0, dmap_sz_1, _, _ = my_map.shape  # (b, k, 96, 128)
-        var = 0
 
-        for b in range(dmap_sz_0):
-            for k in range(dmap_sz_1):
-                var = var + torch.var(my_map[b, k, :, :])
-
+        #var = torch.var(my_map, dim=[2, 3]).sum(dim=[0, 1])
+        h_var = torch.var(my_map, dim=2).sum(dim=[0, 1])
+        w_var = torch.var(my_map, dim=3).sum(dim=[0, 1])
+        var = h_var.sum() + w_var.sum()
         #self.conc_loss = torch.exp(0.5*var) ** 0.5
-        self.conc_loss = 2 * (var ** 0.5)
+        self.conc_loss = 3 * (var ** 0.5)
         #self.conc_loss = (var ** 2)
 
 
@@ -36,17 +36,22 @@ class loss_separation(nn.Module):
         keypoints = keypoints.float()
 
         for i in range(num_of_kp):
-            cur_loss = F.mse_loss(keypoints[:, i, :].unsqueeze(1), keypoints)
+            cur_loss = F.mse_loss(keypoints[:, i, :].unsqueeze(1), keypoints, reduction='sum')
             sep_loss = sep_loss + cur_loss
 
-        #self.sep_loss_output = torch.exp(-1 * sep_loss)
+        #self.sep_loss_output = torch.exp(-0.0001 * sep_loss)
         #self.sep_loss_output = 0.01 * ((10*sep_loss) ** 0.5)
         #self.sep_loss_output = 200/sep_loss
-        #self.sep_loss_output = sep_loss
-        #self.sep_loss_output = 1 - ((1+torch.tanh(1e-6 * sep_loss))*(1-torch.tanh(1e-6 * sep_loss)))
-        #self.sep_loss_output = (1-sep_loss)
-        self.sep_loss_output = 2*(1-torch.sigmoid(1e-4*sep_loss))
+        #self.sep_loss_output = (1+torch.tanh(1e-2 * sep_loss))*(1-torch.tanh(1e-2 * sep_loss))
+
+        #self.sep_loss_output = 2*(1-torch.sigmoid(1e-4*sep_loss))
         #self.sep_loss_output = 4*torch.sigmoid(1e-4*sep_loss)*(1-torch.sigmoid(1e-4*sep_loss))
+        #self.sep_loss_output = 4 * torch.sigmoid(1e-5 * sep_loss) * (1 - torch.sigmoid(1e-5 * sep_loss))
+        #self.sep_loss_output = 4 * torch.sigmoid(0.5 * 1e-6 * sep_loss) * (1 - torch.sigmoid(0.5 * 1e-6 * sep_loss))
+        self.sep_loss_output = 4 * torch.sigmoid(1e-7 * sep_loss) * (1 - torch.sigmoid(1e-7 * sep_loss))
+        #self.sep_loss_output = 4 * torch.sigmoid(1e-8 * sep_loss) * (1 - torch.sigmoid(1e-8 * sep_loss))
+        #self.sep_loss_output = 4 * torch.sigmoid(1e-6 * sep_loss) * (1 - torch.sigmoid(1e-6 * sep_loss))
+        #self.sep_loss_output = 10 * speed_sigmoid(1e-2*sep_loss) * (1 - speed_sigmoid(1e-2*sep_loss))
 
     def forward(self):
         return self.sep_loss_output
@@ -67,31 +72,13 @@ class loss_transformation(nn.Module):
         cal_tf_keypoint = torch.matmul(my_tfMatrix, all_kp)
         cal_tf_keypoint = torch.round(cal_tf_keypoint).float()
         cal_tf_keypoint = cal_tf_keypoint[:, 0:2, :] #(b, 2, k)
-
         get_my_tf_keypoint = cal_tf_keypoint.permute(0, 2, 1).cuda()
-        '''
-        get_my_tf_keypoint = torch.zeros_like(tf_keypoints) #(b,k,2)
-        for i in range(num_of_kp):
-            get_my_tf_keypoint[:, i, :] = cal_tf_keypoint[:, :, i]
-        '''
+
         o_tf_keypoints = torch.zeros_like(tf_keypoints)
-        o_tf_keypoints[:, :, 0] = tf_keypoints[:, :, 0] - (0.5 * my_width)
-        o_tf_keypoints[:, :, 1] = -tf_keypoints[:, :, 1] + (0.5 * my_height)
-        '''
-        for b in range(cur_batch):
-            for k in range(num_of_kp):
-                tf_x = get_my_tf_keypoint[b, k, 0]
-                tf_y = get_my_tf_keypoint[b, k, 1]
-                if ((tf_x < (-0.5 * my_width)) or (tf_x > (0.5 * my_width)) or (tf_y < (-0.5*my_height)) or (tf_y > (0.5*my_height))):
-                    o_tf_keypoints[b, k, :] = 0
-                    get_my_tf_keypoint[b, k, :] = 0
-        '''
-        '''
-        if ((tf_keypoints[:, :, 0] < (-0.5 * my_width)) or (tf_keypoints[:, :, 0] > (0.5 * my_width)) or (tf_keypoints[:, :, 1] < (0.5*my_height)) or (tf_keypoints[:, :, 1] > (0.5*my_height))):
-            tf_keypoints[:, :, :] = 0
-            get_my_tf_keypoint[:, :, :] = 0
-        '''
-        self.my_transf_loss = F.mse_loss(o_tf_keypoints, get_my_tf_keypoint)
+        o_tf_keypoints[:, :, 0] = get_my_tf_keypoint[:, :, 0] + (0.5 * my_width)
+        o_tf_keypoints[:, :, 1] = -get_my_tf_keypoint[:, :, 1] + (0.5 * my_height)
+
+        self.my_transf_loss = F.mse_loss(o_tf_keypoints, tf_keypoints)
         self.transf_loss = self.my_transf_loss
 
     def forward(self):
@@ -147,8 +134,14 @@ class loss_transformation_3kp(nn.Module):
 class loss_cosim(nn.Module):
     def __init__(self, DetectionMap, tf_DetectionMap):
         super(loss_cosim, self).__init__()
-        cosim = torch.nn.CosineSimilarity(dim=1, eps=1e-8)
-        self.cosim_loss = torch.exp(1e-4 * torch.sum(cosim(DetectionMap, tf_DetectionMap)))
+        cosim = torch.nn.CosineSimilarity(dim=0, eps=1e-8)
+
+        #self.cosim_loss = torch.exp(1e-4 * torch.sum(cosim(DetectionMap, tf_DetectionMap)))
+        #self.cosim_loss = (torch.mean(torch.sum(cosim(DetectionMap, tf_DetectionMap), dim=1)) ** 0.5)
+        #self.cosim_loss = 1 - torch.sigmoid(torch.mean(cosim(DetectionMap, tf_DetectionMap)))
+        #my_val = torch.mean(cosim(DetectionMap, tf_DetectionMap))
+        my_val = (cosim(DetectionMap, tf_DetectionMap)).sum()
+        self.cosim_loss = 1 - ((1-torch.tanh(1e-6 * my_val)) * (1+torch.tanh(1e-6 * my_val)))
 
     def forward(self):
         return self.cosim_loss
@@ -156,6 +149,8 @@ class loss_cosim(nn.Module):
 class loss_matching(nn.Module):
     def __init__(self, theta, my_feature, my_tf_feature, cur_batch, num_of_kp, my_width, my_height):
         super(loss_matching, self).__init__()
+        self. my_feature = my_feature
+        self.my_tf_feature = my_tf_feature
 
         tf_keypoints = my_tf_feature[:, :, 0:2].cuda()
         keypoints = my_feature[:, :, 0:2].cuda()
@@ -175,18 +170,26 @@ class loss_matching(nn.Module):
         get_my_tf_keypoint = cal_tf_keypoint.permute(0, 2, 1).cuda()
 
         o_tf_keypoints = torch.zeros_like(tf_keypoints)
-        o_tf_keypoints[:, :, 0] = tf_keypoints[:, :, 0] - (0.5 * my_width)
-        o_tf_keypoints[:, :, 1] = -tf_keypoints[:, :, 1] + (0.5 * my_height)
+        o_tf_keypoints[:, :, 0] = get_my_tf_keypoint[:, :, 0] + (0.5 * my_width)
+        o_tf_keypoints[:, :, 1] = -get_my_tf_keypoint[:, :, 1] + (0.5 * my_height)
 
-        self.my_transf_loss = F.mse_loss(o_tf_keypoints, get_my_tf_keypoint)
+        self.my_transf_loss = F.mse_loss(o_tf_keypoints, tf_keypoints)
 
-     #def hamming_distance(self):
+    def hamming_distance(self, fk, tf_fk):
+        dist = torch.cdist(fk, tf_fk, p=0)
 
+        return dist
 
-
-
-    #def forward(self):
+    def forward(self):
+        fk = self.my_feature[:, :, 2:]
+        tf_fk = self.my_tf_feature[:, :, 2:]
+        #my_dist = self.hamming_distance(fk, tf_fk)
+        #my_dist = torch.sum(my_dist, dim=2)
+        #matching_loss = torch.mean(my_dist)
+        matching_loss = F.mse_loss(fk, tf_fk, reduction='sum')
+        my_matching_loss = 0.01 * (matching_loss ** 0.5)
         #return self.my_transf_loss , self.matching_loss
+        return self.my_transf_loss, my_matching_loss
 
 class APLoss(nn.Module):
     """ differentiable AP loss, through quantization.

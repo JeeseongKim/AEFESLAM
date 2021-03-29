@@ -9,6 +9,49 @@ import torch.nn.functional as F
 import math
 from GenHeatmap import *
 
+def dev_sigmoid_100(x):
+    out = 4 * torch.sigmoid(100 * x) * (1 - torch.sigmoid(100 * x))
+
+    return out
+
+def speed_sigmoid_5(x):
+    out = 1 / (1 + torch.exp(-5 * x))
+
+    return out
+
+def speed_sigmoid_5_trans_x_1(x):
+    out = 1 / (1 + torch.exp(-5 * (x-1)))
+
+    return out
+
+def speed_sigmoid_50(x):
+    out = 1 / (1 + torch.exp(-50 * x))
+
+    return out
+
+
+def speed_sigmoid_100(x):
+    out = 1 / (1 + torch.exp(-100 * x))
+
+    return out
+
+
+def speed_order4(x):
+    out = (-10**5)*(x**4) + (10**4)*(x**3) + x
+
+    return out
+
+def tanh_05(x):
+    out = (1 / (1 + torch.exp(-0.5 * x))) * (1 - (1 / (1 + torch.exp(-0.5 * x))))
+
+    return out
+
+def tanh_5(x):
+    out = (1 / (1 + torch.exp(-5 * x))) * (1 - (1 / (1 + torch.exp(-5 * x))))
+
+    return out
+
+
 class DetectionConfidenceMap2keypoint(nn.Module):
     def __init__(self):
         super(DetectionConfidenceMap2keypoint, self).__init__()
@@ -22,17 +65,24 @@ class DetectionConfidenceMap2keypoint(nn.Module):
         #Rk = self.elu(Rk)
         #tf_Rk = self.elu(tf_Rk)
 
-        #Dk_min = torch.min(torch.min(Rk, dim=2)[0], dim=2)[0]
-        #Dk_max = torch.max(torch.max(Rk, dim=2)[0], dim=2)[0]
-        #my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
-        #Dk = (Rk - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((my_max_min[:, :, 1] - my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
-        Dk = torch.sigmoid(Rk)
+        Dk_min = torch.min(torch.min(Rk, dim=2)[0], dim=2)[0]
+        Dk_max = torch.max(torch.max(Rk, dim=2)[0], dim=2)[0]
+        my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
+        Dk = (Rk - (my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((my_max_min[:, :, 1] - my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
+        #Dk = torch.sigmoid(Rk)
+        #Dk = speed_order4(Rk)
+        #Dk = speed_sigmoid_50(Rk)
+        #Dk = tanh_5(Rk)
 
-        #tf_Dk_min = torch.min(torch.min(tf_Rk, dim=2)[0], dim=2)[0]
-        #tf_Dk_max = torch.max(torch.max(tf_Rk, dim=2)[0], dim=2)[0]
-        #tf_my_max_min = torch.cat([tf_Dk_min.unsqueeze(2), tf_Dk_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
-        #tf_Dk = (tf_Rk - (tf_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((tf_my_max_min[:, :, 1] - tf_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
-        tf_Dk = torch.sigmoid(tf_Rk)
+
+        tf_Dk_min = torch.min(torch.min(tf_Rk, dim=2)[0], dim=2)[0]
+        tf_Dk_max = torch.max(torch.max(tf_Rk, dim=2)[0], dim=2)[0]
+        tf_my_max_min = torch.cat([tf_Dk_min.unsqueeze(2), tf_Dk_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
+        tf_Dk = (tf_Rk - (tf_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((tf_my_max_min[:, :, 1] - tf_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
+        #tf_Dk = torch.sigmoid(tf_Rk)
+        #tf_Dk = speed_order4(tf_Rk)
+        #tf_Dk = speed_sigmoid_50(tf_Rk)
+        #tf_Dk = tanh_5(tf_Rk)
 
         #map_val_all = torch.softmax(Rk, dim=1)
         #tf_map_val_all = torch.softmax(tf_Rk, dim=1)
@@ -49,7 +99,7 @@ class DetectionConfidenceMap2keypoint(nn.Module):
         tf_get_kp_x = (tf_Dk * x_indices).sum(dim=[2, 3])
         tf_get_kp_y = (tf_Dk * y_indices).sum(dim=[2, 3])
 
-        kp = torch.cat([(torch.round(get_kp_x/get_zeta)).unsqueeze(2), (torch.round(get_kp_y/get_zeta)).unsqueeze(2)], dim=2)
+        kp = torch.cat([(torch.round(get_kp_x/get_zeta)).unsqueeze(2).float(), (torch.round(get_kp_y/get_zeta)).unsqueeze(2).float()], dim=2)
         tf_kp = torch.cat([(torch.round(tf_get_kp_x/tf_get_zeta)).unsqueeze(2), (torch.round(tf_get_kp_y/tf_get_zeta)).unsqueeze(2)], dim=2)
 
         return Dk, tf_Dk, kp, tf_kp, get_zeta, tf_get_zeta

@@ -120,7 +120,7 @@ class Linear(nn.Module):
         self.linear = torch.nn.Linear(img_width*img_height, feature_dimension)
 
     def forward(self, input):
-        self.linear.apply(weights_init)
+        #self.linear.apply(weights_init)
         return self.linear(input)
 
 
@@ -130,7 +130,7 @@ class dec_Linear(nn.Module):
         self.linear_dec = torch.nn.Linear(feature_dimension, img_width * img_height)
 
     def forward(self, input):
-        self.linear_dec.apply(weights_init)
+        #self.linear_dec.apply(weights_init)
         return self.linear_dec(input)
         #return out
 

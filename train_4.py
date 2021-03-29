@@ -18,9 +18,10 @@ import seaborn
 import matplotlib.pyplot as plt
 from torchvision import transforms
 import warnings
+import pytorch_msssim
 
 warnings.filterwarnings("ignore")
-
+from IQA_pytorch import SSIM
 from torch.utils.data import TensorDataset, DataLoader
 
 import visdom
@@ -35,10 +36,11 @@ plot_transf = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title
 plot_detection = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Detection Map Loss'))
 plot_wk = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Weight(Desc) Loss'))
 plot_cosim = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Cosine Similarity Loss'))
+plot_matching = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Feature Matching Loss'))
 
 torch.multiprocessing.set_start_method('spawn', force=True)
 #########################################parameter#########################################
-num_of_kp = 150
+num_of_kp = 200
 feature_dimension = 256 #32
 
 my_width = 160  # 272 #96 #272 #208
@@ -47,7 +49,7 @@ my_height = 48  # 80 #32 #80 #64
 input_width = my_width
 
 num_epochs = 100
-batch_size = 4
+batch_size = 8#4
 
 stacked_hourglass_inpdim_kp = input_width
 stacked_hourglass_oupdim_kp = num_of_kp  # number of my keypoints
@@ -64,26 +66,32 @@ def train():
     model_start = time.time()
 
     model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=stacked_hourglass_inpdim_kp, oup_dim=stacked_hourglass_oupdim_kp, bn=False, increase=0)
+    #model_StackedHourglassForKP = L2net_R2D2(num_of_kp=num_of_kp)
     model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
-    optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     model_feature_descriptor = Linear(img_width=my_width, img_height=my_height, feature_dimension=feature_dimension)
     model_feature_descriptor = nn.DataParallel(model_feature_descriptor).cuda()
-    optimizer_Wk_ = torch.optim.AdamW(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_Wk_ = torch.optim.AdamW(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    optimizer_Wk_ = torch.optim.Adam(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
 
-    #model_detection_map_kp = ReconDetectionMapWithKP_Res(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
+    #model_detection_map_kp = ReconDetectionMapWithKP_ResIQA_pytorch import SSIM(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
     #model_detection_map_kp = ReconDetectionMapWithKP_3kp(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
     model_detection_map_kp = ReconDetectionMapWithKP(img_width=my_width, img_height=my_height, num_of_kp=num_of_kp)
     model_detection_map_kp = nn.DataParallel(model_detection_map_kp).cuda()
-    optimizer_reconDetectionkp = torch.optim.AdamW(model_detection_map_kp.parameters(), lr=learning_rate,weight_decay=weight_decay)
+    #optimizer_reconDetectionkp = torch.optim.AdamW(model_detection_map_kp.parameters(), lr=learning_rate,weight_decay=weight_decay)
+    optimizer_reconDetectionkp = torch.optim.Adam(model_detection_map_kp.parameters(), lr=learning_rate,weight_decay=weight_decay)
 
     model_dec_feature_descriptor = dec_Linear(feature_dimension=feature_dimension, img_width=my_height, img_height=my_width)
     model_dec_feature_descriptor = nn.DataParallel(model_dec_feature_descriptor).cuda()
-    optimizer_decfeatureDescriptor = torch.optim.AdamW(model_dec_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_decfeatureDescriptor = torch.optim.AdamW(model_dec_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    optimizer_decfeatureDescriptor = torch.optim.Adam(model_dec_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
 
     model_StackedHourglassImgRecon = StackedHourglassImgRecon(num_of_kp=num_of_kp, nstack=num_nstack,inp_dim=stacked_hourglass_inpdim_kp, oup_dim=3, bn=False,increase=0)
     model_StackedHourglassImgRecon = nn.DataParallel(model_StackedHourglassImgRecon).cuda()
-    optimizer_ImgRecon = torch.optim.AdamW(model_StackedHourglassImgRecon.parameters(), lr=learning_rate,weight_decay=weight_decay)
+    #optimizer_ImgRecon = torch.optim.AdamW(model_StackedHourglassImgRecon.parameters(), lr=learning_rate,weight_decay=weight_decay)
+    optimizer_ImgRecon = torch.optim.Adam(model_StackedHourglassImgRecon.parameters(), lr=learning_rate,weight_decay=weight_decay)
 
     ###################################################################################################################
     if os.path.exists("./SaveModelCKPT/train_model.pth"):
@@ -117,6 +125,7 @@ def train():
         running_detection_loss = 0
         running_wk_loss = 0
         running_cosim_loss = 0
+        running_matching_loss = 0
 
         for i, data in enumerate(tqdm(train_loader)):
             input_img, cur_filename, kp_img = data
@@ -124,17 +133,24 @@ def train():
             cur_batch = aefe_input.shape[0]
 
             ##########################################ENCODER##########################################
-            theta = random.uniform(-5, 5)  # rotating theta
+            theta = random.uniform(-10, 10)  # rotating theta
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
 
-            Rk = model_StackedHourglassForKP(aefe_input)[:, num_nstack - 1, :, :, :]
-            tf_Rk = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack-1, :, :, :]
+            #Rk = model_StackedHourglassForKP(aefe_input)[:, num_nstack - 1, :, :, :]
+            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack-1, :, :, :]
+            Rk = model_StackedHourglassForKP(aefe_input).sum(dim=1)
+            tf_Rk = model_StackedHourglassForKP(tf_aefe_input).sum(dim=1)
+            #Rk = model_StackedHourglassForKP(aefe_input)
+            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
+
+            #Rk = model_StackedHourglassForKP(aefe_input)
+            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
 
             # keypoint extraction
             #fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint_2(my_width, my_height)
             fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
-            Dk, tf_Dk, kp, tf_kp, zeta, tf_zeta = fn_DetectionConfidenceMap2keypoint(Rk.clone(), tf_Rk, my_height, my_width) #num_of_kp = 2*num_of_kp
+            Dk, tf_Dk, kp, tf_kp, zeta, tf_zeta = fn_DetectionConfidenceMap2keypoint(Rk, tf_Rk, my_height, my_width)
 
             #softmask
             fn_softmask = create_softmask()
@@ -146,25 +162,31 @@ def train():
             Wk = Wk_cal.view(cur_batch, num_of_kp, my_height * my_width)  # (b,k,h*w)
             fk_pre = model_feature_descriptor(Wk)  # (b, k, h*w) -> (b,k,f)
             ww = (softmask * Rk).sum(dim=[2, 3]).unsqueeze(2)
-            fk = (ww * F.relu(fk_pre))  # (b, k, f)
+            #fk = (ww * F.relu(fk_pre))  # (b, k, f)
+            #fk = (speed_sigmoid_100(ww) * speed_sigmoid_100(fk_pre))  # (b, k, f)
+            fk = (speed_sigmoid_5(ww) * speed_sigmoid_5(fk_pre))  # (b, k, f)
+            #fk = (torch.sigmoid(ww) * torch.sigmoid(fk_pre))  # (b, k, f)
 
             tf_Wk_cal = tf_Rk * tf_Dk  # (b,k,h,w)
             tf_Wk = tf_Wk_cal.view(cur_batch, num_of_kp, my_height * my_width)  # (b,k,h*w)
             tf_fk_pre = model_feature_descriptor(tf_Wk)  # (b, k, h*w) -> (b,k,f)
             tf_ww = (tf_softmask * tf_Rk).sum(dim=[2, 3]).unsqueeze(2)
-            tf_fk = (tf_ww * F.relu(tf_fk_pre))  # (b, k, f)
+            #tf_fk = (tf_ww * F.relu(tf_fk_pre))  # (b, k, f)
+            #tf_fk = (speed_sigmoid_100(tf_ww) * speed_sigmoid_100(tf_fk_pre))  # (b, k, f)
+            tf_fk = (speed_sigmoid_5(tf_ww) * speed_sigmoid_5(tf_fk_pre))  # (b, k, f)
+            #tf_fk = (torch.sigmoid(tf_ww) * torch.sigmoid(tf_fk_pre))  # (b, k, f)
 
             my_feature = torch.cat([kp, fk], dim=2)
             my_tf_feature = torch.cat([tf_kp, tf_fk], dim=2)
 
             #feature matching loss
-            #fn_matching_loss = loss_matching(theta, my_feature, my_tf_feature, cur_batch, num_of_kp, my_width, my_height)
-            #cur_matching_loss = fn_matching_loss().cuda()
+            fn_matching_loss = loss_matching(theta, my_feature, my_tf_feature, cur_batch, num_of_kp, my_width, my_height)
+            cur_transf_loss, cur_matching_loss = fn_matching_loss()
 
             #concentration loss
             Rk_con_loss = loss_concentration(Rk).cuda()
             tf_Rk_con_loss = loss_concentration(tf_Rk).cuda()
-            softmask_con_loss = loss_concentration(softmask).cuda()
+            #softmask_con_loss = loss_concentration(softmask).cuda()
 
             # similarity loss btw Dk and tf_Dk
             fn_loss_cosim = loss_cosim(Dk, tf_Dk).cuda()
@@ -176,8 +198,8 @@ def train():
             cur_sep_loss = fn_loss_separation()
 
             # tf loss btw kp tf_kp
-            fn_loss_transformation = loss_transformation(theta, kp, tf_kp, cur_batch, num_of_kp, my_width, my_height).cuda()
-            cur_transf_loss = fn_loss_transformation()
+            #fn_loss_transformation = loss_transformation(theta, kp, tf_kp, cur_batch, num_of_kp, my_width, my_height).cuda()
+            #cur_transf_loss = fn_loss_transformation()
 
             ##########################################DECODER##########################################
             # recon Rk with kp
@@ -188,15 +210,18 @@ def train():
             #reconDk_kp_max = torch.max(torch.max(reconRk_kp, dim=2)[0], dim=2)[0]
             #reconDk_kp_my_max_min = torch.cat([reconDk_kp_min.unsqueeze(2), reconDk_kp_max.unsqueeze(2)],dim=2)  # (b,k,2) 2: min, max
             #reconDk_kp = (reconRk_kp - (reconDk_kp_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((reconDk_kp_my_max_min[:, :, 1] - reconDk_kp_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
-            reconDk_kp = torch.sigmoid(reconRk_kp)
+            #reconDk_kp = torch.sigmoid(reconRk_kp)
+            reconDk_kp = speed_sigmoid_5_trans_x_1(reconRk_kp)
 
             reconWk = model_dec_feature_descriptor(fk)  # (b, 16, feature_dimension)
             reconWk = reconWk.view(cur_batch, num_of_kp, my_height, my_width)
-            reconFk_fk = F.relu(reconWk) * reconDk_kp
+            #reconFk_fk = F.relu(reconWk) * reconDk_kp
+            reconFk_fk = speed_sigmoid_5(reconWk) * reconDk_kp
 
             reconDk_con_loss = loss_concentration(reconDk_kp).cuda()
 
-            cur_con_loss = Rk_con_loss() + tf_Rk_con_loss() + softmask_con_loss() + reconDk_con_loss()
+            #cur_con_loss = Rk_con_loss() + tf_Rk_con_loss() + softmask_con_loss() + reconDk_con_loss()
+            cur_con_loss = Rk_con_loss() + tf_Rk_con_loss() + reconDk_con_loss()
 
             # recon dk loss
             cur_dk_loss = F.mse_loss(Dk, reconDk_kp)
@@ -208,16 +233,21 @@ def train():
             reconImg = model_StackedHourglassImgRecon(concat_recon)  # (b, 8, 3, h,  w)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
-            cur_recon_loss = F.mse_loss(reconImg, aefe_input)
+            cur_recon_loss_l2 = F.mse_loss(reconImg, aefe_input)
+            #cur_recon_loss = pytorch_msssim.msssim(reconImg, aefe_input)
+            criterion = SSIM()
+            cur_recon_loss_ssim = criterion(reconImg, aefe_input)
+            cur_recon_loss = cur_recon_loss_l2 + cur_recon_loss_ssim
 
             #loss parameter
-            param_loss_sep = 5
-            param_loss_con = 0.033
-            param_loss_recon = 10.0
-            param_loss_transf = 0.005
-            param_loss_dk = 25.0  # 10.0
-            param_loss_wk = 20.0
-            param_loss_cosim = 0.05
+            param_loss_sep = 1.0
+            param_loss_con = 0.0005
+            param_loss_recon = 1.0
+            param_loss_transf = 0.1
+            param_loss_dk = 5.0  # 10.0
+            param_loss_wk = 5.0
+            param_loss_cosim = 2.0
+            param_loss_matching = 0.5
 
             my_sep_loss = param_loss_sep * cur_sep_loss
             my_con_loss = param_loss_con * cur_con_loss
@@ -226,10 +256,11 @@ def train():
             my_dk_loss = param_loss_dk * cur_dk_loss
             my_wk_loss = param_loss_wk * cur_Wk_loss
             my_recon_loss = param_loss_recon * cur_recon_loss
+            my_matching_loss = param_loss_matching * cur_matching_loss
 
             loss = my_sep_loss + my_cosim_loss + my_transf_loss + my_dk_loss + my_wk_loss + my_recon_loss + my_con_loss
 
-            print("Sep: ", my_sep_loss.item(), ", Con: ", my_con_loss.item(), ", Cosim: ", my_cosim_loss.item(), ", Trans: ", my_transf_loss.item(), ", Dk: ", my_dk_loss.item(), ", Wk: ", my_wk_loss.item(), ", Recon:", my_recon_loss.item())
+            print("Sep: ", my_sep_loss.item(), ", Con: ", my_con_loss.item(), ", Cosim: ", my_cosim_loss.item(), ", Trans: ", my_transf_loss.item(),  ", Matching: ", my_matching_loss.item(), ", Dk: ", my_dk_loss.item(), ", Wk: ", my_wk_loss.item(), ", Recon:", my_recon_loss.item())
             # ================Backward================
             optimizer_StackedHourglass_kp.zero_grad()
             optimizer_Wk_.zero_grad()
@@ -253,6 +284,7 @@ def train():
             running_detection_loss = running_detection_loss + my_dk_loss.item()
             running_wk_loss = running_wk_loss + my_wk_loss.item()
             running_cosim_loss = running_cosim_loss + my_cosim_loss.item()
+            running_matching_loss = running_matching_loss + my_matching_loss.item()
 
             if (((epoch + 1) % 5 == 0) or (epoch == 0) or (epoch + 1 == num_epochs)):
             #if (((epoch + 1) % 2 == 0) or (epoch == 0) or (epoch + 1 == num_epochs)):
@@ -285,6 +317,7 @@ def train():
         vis.line(Y=[running_detection_loss], X=np.array([epoch]), win=plot_detection, update='append')
         vis.line(Y=[running_wk_loss], X=np.array([epoch]), win=plot_wk, update='append')
         vis.line(Y=[running_cosim_loss], X=np.array([epoch]), win=plot_cosim, update='append')
+        vis.line(Y=[running_matching_loss], X=np.array([epoch]), win=plot_matching, update='append')
 
         saveLossData = 'epoch\t{}\tAll_Loss\t{:.4f} \tRecon\t{:.4f} \tCosim\t{:.4f}\tSep\t{:.4f} \tTrans\t{:.4f}\tDk\t{:.4f}\tWk\t{:.4f}\tConc\t{:.4f}\n'.format(
             epoch, running_loss, running_recon_loss, running_cosim_loss, running_sep_loss, running_transf_loss,
