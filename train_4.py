@@ -49,7 +49,7 @@ my_height = 48  # 80 #32 #80 #64
 input_width = my_width
 
 num_epochs = 100
-batch_size = 8#4
+batch_size = 2#4
 
 stacked_hourglass_inpdim_kp = input_width
 stacked_hourglass_oupdim_kp = num_of_kp  # number of my keypoints
@@ -70,6 +70,11 @@ def train():
     model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
     #optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
     optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    model_AttentionMap = AttentionMap()
+    model_AttentionMap = nn.DataParallel(model_AttentionMap).cuda()
+    # optimizer_Wk_ = torch.optim.AdamW(model_feature_descriptor.parameters(),  lr=learning_rate, weight_decay=weight_decay)
+    optimizer_AttentionMap = torch.optim.Adam(model_AttentionMap.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     model_feature_descriptor = Linear(img_width=my_width, img_height=my_height, feature_dimension=feature_dimension)
     model_feature_descriptor = nn.DataParallel(model_feature_descriptor).cuda()
@@ -101,12 +106,14 @@ def train():
         model_detection_map_kp.module.load_state_dict(checkpoint['model_detection_map_kp'])
         model_dec_feature_descriptor.module.load_state_dict(checkpoint['model_dec_feature_descriptor'])
         model_StackedHourglassImgRecon.module.load_state_dict(checkpoint['model_StackedHourglassImgRecon'])
+        model_AttentionMap.module.load_state_dict(checkpoint['model_AttentionMap'])
 
         optimizer_StackedHourglass_kp.load_state_dict(checkpoint['optimizer_StackedHourglass_kp'])
         optimizer_Wk_.load_state_dict(checkpoint['optimizer_Wk_'])
         optimizer_reconDetectionkp.load_state_dict(checkpoint['optimizer_reconDetectionkp'])
         optimizer_decfeatureDescriptor.load_state_dict(checkpoint['optimizer_decfeatureDescriptor'])
         optimizer_ImgRecon.load_state_dict(checkpoint['optimizer_ImgRecon'])
+        optimizer_AttentionMap.load_state_dict(checkpoint['optimizer_AttentionMap'])
     ###################################################################################################################
 
     dataset = my_dataset(my_width, my_height)
@@ -137,28 +144,32 @@ def train():
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
 
-            #Rk = model_StackedHourglassForKP(aefe_input)[:, num_nstack - 1, :, :, :]
-            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack-1, :, :, :]
             Rk = model_StackedHourglassForKP(aefe_input).sum(dim=1)
             tf_Rk = model_StackedHourglassForKP(tf_aefe_input).sum(dim=1)
-            #Rk = model_StackedHourglassForKP(aefe_input)
-            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
 
-            #Rk = model_StackedHourglassForKP(aefe_input)
-            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
+            MaxPool1d_3 = torch.nn.MaxPool1d(3)
+
+            attention = model_AttentionMap(aefe_input) #(b,480,480)
+            attention_col = torch.sum(attention, dim=1).unsqueeze(1)
+            pooled_attention = torch.softmax(MaxPool1d_3(attention_col), dim=1) #(b,1,160)
+
+            tf_attention = model_AttentionMap(tf_aefe_input) #(b,480,480)
+            tf_attention_col = torch.sum(tf_attention, dim=1).unsqueeze(1)
+            tf_pooled_attention = torch.softmax(MaxPool1d_3(tf_attention_col), dim=1) #(b,1,160)
 
             # keypoint extraction
             #fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint_2(my_width, my_height)
             fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint()
-            Dk, tf_Dk, kp, tf_kp, zeta, tf_zeta = fn_DetectionConfidenceMap2keypoint(Rk, tf_Rk, my_height, my_width)
+            Dk, tf_Dk, Ok, tf_Ok, kp, tf_kp, zeta, tf_zeta = fn_DetectionConfidenceMap2keypoint(Rk, tf_Rk, my_height, my_width, pooled_attention, tf_pooled_attention)
 
             #softmask
             fn_softmask = create_softmask()
-            softmask = fn_softmask(Dk, zeta)  # (b,k,96,128)
-            tf_softmask = fn_softmask(tf_Dk, zeta)  # (b,k,96,128)
+            softmask = fn_softmask(Ok, zeta)  # (b,k,96,128)
+            tf_softmask = fn_softmask(tf_Ok, zeta)  # (b,k,96,128)
 
             # descriptor generation
-            Wk_cal = Rk * Dk  # (b,k,h,w)
+            #Wk_cal = Rk * Dk  # (b,k,h,w)
+            Wk_cal = Rk * pooled_attention.unsqueeze(1)
             Wk = Wk_cal.view(cur_batch, num_of_kp, my_height * my_width)  # (b,k,h*w)
             fk_pre = model_feature_descriptor(Wk)  # (b, k, h*w) -> (b,k,f)
             ww = (softmask * Rk).sum(dim=[2, 3]).unsqueeze(2)
@@ -167,7 +178,8 @@ def train():
             fk = (speed_sigmoid_5(ww) * speed_sigmoid_5(fk_pre))  # (b, k, f)
             #fk = (torch.sigmoid(ww) * torch.sigmoid(fk_pre))  # (b, k, f)
 
-            tf_Wk_cal = tf_Rk * tf_Dk  # (b,k,h,w)
+            #tf_Wk_cal = tf_Rk * tf_Dk  # (b,k,h,w)
+            tf_Wk_cal = Rk * tf_pooled_attention.unsqueeze(1)
             tf_Wk = tf_Wk_cal.view(cur_batch, num_of_kp, my_height * my_width)  # (b,k,h*w)
             tf_fk_pre = model_feature_descriptor(tf_Wk)  # (b, k, h*w) -> (b,k,f)
             tf_ww = (tf_softmask * tf_Rk).sum(dim=[2, 3]).unsqueeze(2)
@@ -189,7 +201,7 @@ def train():
             #softmask_con_loss = loss_concentration(softmask).cuda()
 
             # similarity loss btw Dk and tf_Dk
-            fn_loss_cosim = loss_cosim(Dk, tf_Dk).cuda()
+            fn_loss_cosim = loss_cosim(Ok, tf_Ok).cuda()
             #fn_loss_cosim = loss_cosim(Rk, tf_Rk).cuda()
             cur_cosim_loss = fn_loss_cosim()
 
@@ -206,30 +218,38 @@ def train():
             reconRk_kp = model_detection_map_kp(kp)
 
             # reconDk_kp normalization
-            #reconDk_kp_min = torch.min(torch.min(reconRk_kp, dim=2)[0], dim=2)[0]
-            #reconDk_kp_max = torch.max(torch.max(reconRk_kp, dim=2)[0], dim=2)[0]
-            #reconDk_kp_my_max_min = torch.cat([reconDk_kp_min.unsqueeze(2), reconDk_kp_max.unsqueeze(2)],dim=2)  # (b,k,2) 2: min, max
-            #reconDk_kp = (reconRk_kp - (reconDk_kp_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((reconDk_kp_my_max_min[:, :, 1] - reconDk_kp_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
-            #reconDk_kp = torch.sigmoid(reconRk_kp)
-            reconDk_kp = speed_sigmoid_5_trans_x_1(reconRk_kp)
+            reconDk_kp_min = torch.min(torch.min(reconRk_kp, dim=2)[0], dim=2)[0]
+            reconDk_kp_max = torch.max(torch.max(reconRk_kp, dim=2)[0], dim=2)[0]
+            reconDk_kp_my_max_min = torch.cat([reconDk_kp_min.unsqueeze(2), reconDk_kp_max.unsqueeze(2)],dim=2)  # (b,k,2) 2: min, max
+            reconDk_kp = (reconRk_kp - (reconDk_kp_my_max_min[:, :, 0].unsqueeze(2).unsqueeze(3))) / ((reconDk_kp_my_max_min[:, :, 1] - reconDk_kp_my_max_min[:, :, 0]).unsqueeze(2).unsqueeze(3))
+            reconOk_kp = reconDk_kp
+            #reconOk_kp = torch.sigmoid(reconRk_kp)
+            #reconOk_kp = speed_sigmoid_5(reconRk_kp)
+            #reconDk_kp = speed_sigmoid_5_trans_x_1(reconRk_kp)
 
             reconWk = model_dec_feature_descriptor(fk)  # (b, 16, feature_dimension)
             reconWk = reconWk.view(cur_batch, num_of_kp, my_height, my_width)
             #reconFk_fk = F.relu(reconWk) * reconDk_kp
-            reconFk_fk = speed_sigmoid_5(reconWk) * reconDk_kp
+            reconFk_fk = F.relu(reconWk) * reconOk_kp
+            #reconFk_fk = speed_sigmoid_5(reconWk) * reconDk_kp
+            #reconFk_fk = speed_sigmoid_5(reconWk) * reconOk_kp
+            #reconFk_fk = reconWk
 
-            reconDk_con_loss = loss_concentration(reconDk_kp).cuda()
+            #reconDk_con_loss = loss_concentration(reconDk_kp).cuda()
+            reconDk_con_loss = loss_concentration(reconOk_kp).cuda()
 
             #cur_con_loss = Rk_con_loss() + tf_Rk_con_loss() + softmask_con_loss() + reconDk_con_loss()
             cur_con_loss = Rk_con_loss() + tf_Rk_con_loss() + reconDk_con_loss()
 
             # recon dk loss
-            cur_dk_loss = F.mse_loss(Dk, reconDk_kp)
+            #cur_dk_loss = F.mse_loss(Dk, reconDk_kp)
+            cur_dk_loss = F.mse_loss(Ok, reconOk_kp)
 
             # recon Wk loss
             cur_Wk_loss = F.mse_loss(Wk_cal, reconWk)
 
-            concat_recon = torch.cat((reconDk_kp, reconFk_fk), 1)  # (b, 2k, h, w) channel-wise concatenation
+            #concat_recon = torch.cat((reconDk_kp, reconFk_fk), 1)  # (b, 2k, h, w) channel-wise concatenation
+            concat_recon = torch.cat((reconOk_kp, reconFk_fk), 1)  # (b, 2k, h, w) channel-wise concatenation
             reconImg = model_StackedHourglassImgRecon(concat_recon)  # (b, 8, 3, h,  w)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
@@ -241,13 +261,13 @@ def train():
 
             #loss parameter
             param_loss_sep = 1.0
-            param_loss_con = 0.0005
+            param_loss_con = 0.001
             param_loss_recon = 1.0
             param_loss_transf = 0.1
             param_loss_dk = 5.0  # 10.0
             param_loss_wk = 5.0
             param_loss_cosim = 2.0
-            param_loss_matching = 0.5
+            param_loss_matching = 10000
 
             my_sep_loss = param_loss_sep * cur_sep_loss
             my_con_loss = param_loss_con * cur_con_loss
@@ -267,6 +287,7 @@ def train():
             optimizer_reconDetectionkp.zero_grad()
             optimizer_decfeatureDescriptor.zero_grad()
             optimizer_ImgRecon.zero_grad()
+            optimizer_AttentionMap.zero_grad()
 
             loss.backward()
 
@@ -275,6 +296,7 @@ def train():
             optimizer_reconDetectionkp.step()
             optimizer_decfeatureDescriptor.step()
             optimizer_ImgRecon.step()
+            optimizer_AttentionMap.step()
 
             running_loss = running_loss + loss.item()
             running_recon_loss = running_recon_loss + my_recon_loss.item()
@@ -301,12 +323,14 @@ def train():
                         'model_detection_map_kp': model_detection_map_kp.module.state_dict(),
                         'model_dec_feature_descriptor': model_dec_feature_descriptor.module.state_dict(),
                         'model_StackedHourglassImgRecon': model_StackedHourglassImgRecon.module.state_dict(),
+                        'model_AttentionMap': model_AttentionMap.module.state_dict(),
 
                         'optimizer_StackedHourglass_kp': optimizer_StackedHourglass_kp.state_dict(),
                         'optimizer_Wk_': optimizer_Wk_.state_dict(),
                         'optimizer_reconDetectionkp': optimizer_reconDetectionkp.state_dict(),
                         'optimizer_decfeatureDescriptor': optimizer_decfeatureDescriptor.state_dict(),
                         'optimizer_ImgRecon': optimizer_ImgRecon.state_dict(),
+                        'optimizer_AttentionMap': optimizer_AttentionMap.state_dict(),
                     }, "./SaveModelCKPT/train_model.pth")
 
         vis.line(Y=[running_loss], X=np.array([epoch]), win=plot_all, update='append')

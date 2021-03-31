@@ -8,6 +8,7 @@ from model.resnet import *
 import torch.nn.functional as F
 import math
 from GenHeatmap import *
+#from torchvision.models import resnet50
 
 def dev_sigmoid_100(x):
     out = 4 * torch.sigmoid(100 * x) * (1 - torch.sigmoid(100 * x))
@@ -57,14 +58,7 @@ class DetectionConfidenceMap2keypoint(nn.Module):
         super(DetectionConfidenceMap2keypoint, self).__init__()
         self.elu = torch.nn.ELU(inplace=True)
 
-    def forward(self, Rk, tf_Rk, my_height, my_width):
-        #_, inp_channel, img_height, img_width = Rk.shape
-        #keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
-        #tf_keypoint = torch.ones(cur_batch, inp_channel, 2).cuda()
-
-        #Rk = self.elu(Rk)
-        #tf_Rk = self.elu(tf_Rk)
-
+    def forward(self, Rk, tf_Rk, my_height, my_width, pooled_attention, tf_pooled_attention):
         Dk_min = torch.min(torch.min(Rk, dim=2)[0], dim=2)[0]
         Dk_max = torch.max(torch.max(Rk, dim=2)[0], dim=2)[0]
         my_max_min = torch.cat([Dk_min.unsqueeze(2), Dk_max.unsqueeze(2)], dim=2)  # (b,k,2) 2: min, max
@@ -73,7 +67,8 @@ class DetectionConfidenceMap2keypoint(nn.Module):
         #Dk = speed_order4(Rk)
         #Dk = speed_sigmoid_50(Rk)
         #Dk = tanh_5(Rk)
-
+        #Dk = torch.softmax(Rk, dim=1)
+        Ok = Dk * pooled_attention.unsqueeze(1)
 
         tf_Dk_min = torch.min(torch.min(tf_Rk, dim=2)[0], dim=2)[0]
         tf_Dk_max = torch.max(torch.max(tf_Rk, dim=2)[0], dim=2)[0]
@@ -83,26 +78,25 @@ class DetectionConfidenceMap2keypoint(nn.Module):
         #tf_Dk = speed_order4(tf_Rk)
         #tf_Dk = speed_sigmoid_50(tf_Rk)
         #tf_Dk = tanh_5(tf_Rk)
+        #tf_Dk = torch.softmax(tf_Rk, dim=1)
+        tf_Ok = tf_Dk * tf_pooled_attention.unsqueeze(1)
 
-        #map_val_all = torch.softmax(Rk, dim=1)
-        #tf_map_val_all = torch.softmax(tf_Rk, dim=1)
-
-        get_zeta = Dk.sum([2, 3]) #(b, k)
-        tf_get_zeta = tf_Dk.sum([2, 3]) #(b, k)
+        get_zeta = Ok.sum([2, 3]) #(b, k)
+        tf_get_zeta = tf_Ok.sum([2, 3]) #(b, k)
 
         x_indices = torch.arange(0, my_width).repeat(Rk.shape[0], Rk.shape[1], my_height, 1).cuda()
         y_indices = torch.arange(0, my_height).repeat(Rk.shape[0], Rk.shape[1], my_width, 1).permute(0, 1, 3, 2).cuda()
 
-        get_kp_x = (Dk * x_indices).sum(dim=[2, 3])
-        get_kp_y = (Dk * y_indices).sum(dim=[2, 3])
+        get_kp_x = (Ok * x_indices).sum(dim=[2, 3])
+        get_kp_y = (Ok * y_indices).sum(dim=[2, 3])
 
-        tf_get_kp_x = (tf_Dk * x_indices).sum(dim=[2, 3])
-        tf_get_kp_y = (tf_Dk * y_indices).sum(dim=[2, 3])
+        tf_get_kp_x = (tf_Ok * x_indices).sum(dim=[2, 3])
+        tf_get_kp_y = (tf_Ok * y_indices).sum(dim=[2, 3])
 
         kp = torch.cat([(torch.round(get_kp_x/get_zeta)).unsqueeze(2).float(), (torch.round(get_kp_y/get_zeta)).unsqueeze(2).float()], dim=2)
         tf_kp = torch.cat([(torch.round(tf_get_kp_x/tf_get_zeta)).unsqueeze(2), (torch.round(tf_get_kp_y/tf_get_zeta)).unsqueeze(2)], dim=2)
 
-        return Dk, tf_Dk, kp, tf_kp, get_zeta, tf_get_zeta
+        return Dk, tf_Dk, Ok, tf_Ok, kp, tf_kp, get_zeta, tf_get_zeta
 
 class DetectionConfidenceMap2keypoint_3kp(nn.Module):
     def __init__(self):
@@ -628,6 +622,40 @@ class create_softmask (nn.Module):
         softmask = DetectionMap / zeta.unsqueeze(2).unsqueeze(3)
 
         return softmask
+
+class AttentionMap (nn.Module):
+    def __init__(self):
+        super(AttentionMap, self).__init__()
+        #self.backbone = resnet50()
+        #del self.backbone.fc
+        self.backbone = resnet50()
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+
+        self.conv = nn.Conv2d(2048, 256, 1)
+
+    def forward(self, input):
+        #x = self.backbone.conv1(input) ##
+        x = self.conv1(input) ##
+        x = self.backbone.bn1(x)
+        x = self.backbone.relu(x)
+
+        x = self.backbone.layer1(x)
+        x = self.backbone.layer2(x) ##
+        x = self.backbone.layer3(x) ##
+        x = self.backbone.layer4(x) ##
+
+        #channel: 2048 -> 256 (hidden_dim)
+        h = self.conv(x) #(b, k, h/8, w/8) = (b, 256, 12, 39)
+
+        #positional encoding
+        H, W = h.shape[-2:]
+        getattentionMap = h.flatten(2).permute(2, 0, 1)
+
+        attention_map_1 = getattentionMap.permute(1, 0, 2)
+        attention_map_2 = torch.transpose(getattentionMap, 1, 2)
+        attention_map = torch.matmul(attention_map_1, attention_map_2).permute(2, 1, 0)
+
+        return attention_map
 
 class ReconDetectionMapWithKP_3kp(nn.Module):
     def __init__(self, img_width, img_height, num_of_kp):
