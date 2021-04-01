@@ -316,22 +316,23 @@ def train():
                 #fn_save_tfkpimg(tf_aefe_input, tf_kp, epoch + 1, cur_filename)
                 img_save_filename = ("SaveReconstructedImg/recon_%s_epoch_%s.jpg" % (cur_filename, epoch + 1))
                 save_image(reconImg, img_save_filename)
-                if (epoch != 0):
-                    torch.save({
-                        'model_StackedHourglassForKP': model_StackedHourglassForKP.module.state_dict(),
-                        'model_feature_descriptor': model_feature_descriptor.module.state_dict(),
-                        'model_detection_map_kp': model_detection_map_kp.module.state_dict(),
-                        'model_dec_feature_descriptor': model_dec_feature_descriptor.module.state_dict(),
-                        'model_StackedHourglassImgRecon': model_StackedHourglassImgRecon.module.state_dict(),
-                        'model_AttentionMap': model_AttentionMap.module.state_dict(),
 
-                        'optimizer_StackedHourglass_kp': optimizer_StackedHourglass_kp.state_dict(),
-                        'optimizer_Wk_': optimizer_Wk_.state_dict(),
-                        'optimizer_reconDetectionkp': optimizer_reconDetectionkp.state_dict(),
-                        'optimizer_decfeatureDescriptor': optimizer_decfeatureDescriptor.state_dict(),
-                        'optimizer_ImgRecon': optimizer_ImgRecon.state_dict(),
-                        'optimizer_AttentionMap': optimizer_AttentionMap.state_dict(),
-                    }, "./SaveModelCKPT/train_model.pth")
+        if (epoch != 0) and ((epoch + 1) % 5 == 0):
+            torch.save({
+                'model_StackedHourglassForKP': model_StackedHourglassForKP.module.state_dict(),
+                'model_feature_descriptor': model_feature_descriptor.module.state_dict(),
+                'model_detection_map_kp': model_detection_map_kp.module.state_dict(),
+                'model_dec_feature_descriptor': model_dec_feature_descriptor.module.state_dict(),
+                'model_StackedHourglassImgRecon': model_StackedHourglassImgRecon.module.state_dict(),
+                'model_AttentionMap': model_AttentionMap.module.state_dict(),
+
+                'optimizer_StackedHourglass_kp': optimizer_StackedHourglass_kp.state_dict(),
+                'optimizer_Wk_': optimizer_Wk_.state_dict(),
+                'optimizer_reconDetectionkp': optimizer_reconDetectionkp.state_dict(),
+                'optimizer_decfeatureDescriptor': optimizer_decfeatureDescriptor.state_dict(),
+                'optimizer_ImgRecon': optimizer_ImgRecon.state_dict(),
+                'optimizer_AttentionMap': optimizer_AttentionMap.state_dict(),
+            }, "./SaveModelCKPT/train_model.pth")
 
         vis.line(Y=[running_loss], X=np.array([epoch]), win=plot_all, update='append')
         vis.line(Y=[running_recon_loss], X=np.array([epoch]), win=plot_recon, update='append')

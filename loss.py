@@ -187,7 +187,7 @@ class loss_matching(nn.Module):
         #my_dist = torch.sum(my_dist, dim=2)
         #matching_loss = torch.mean(my_dist)
         matching_loss = F.mse_loss(fk, tf_fk)
-        my_matching_loss = 0.01 * (matching_loss ** 0.5)
+        my_matching_loss = 0.01 * ((0.005*matching_loss) ** 0.3)
         #return self.my_transf_loss , self.matching_loss
         return self.my_transf_loss, my_matching_loss
 

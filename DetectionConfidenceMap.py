@@ -98,6 +98,39 @@ class DetectionConfidenceMap2keypoint(nn.Module):
 
         return Dk, tf_Dk, Ok, tf_Ok, kp, tf_kp, get_zeta, tf_get_zeta
 
+class getKP_DETR(nn.Module):
+    def __init__(self):
+        super(getKP_DETR, self).__init__()
+        self.elu = torch.nn.ELU(inplace=True)
+
+    def forward(self, Rk, tf_Rk, my_height, my_width, pooled_attention, tf_pooled_attention, Hk, tf_Hk):
+
+        Ok = torch.softmax(Rk, dim=1) * pooled_attention.unsqueeze(1)
+        tf_Ok = torch.softmax(tf_Rk, dim=1) * tf_pooled_attention.unsqueeze(1)
+
+        Hk = torch.sigmoid(Hk)
+        tf_Hk = torch.sigmoid(tf_Hk)
+
+        Vk = Ok * Hk.unsqueeze(2)
+        tf_Vk = Ok * tf_Hk.unsqueeze(2)
+
+        get_zeta = Vk.sum([2, 3]) #(b, k)
+        tf_get_zeta = tf_Vk.sum([2, 3]) #(b, k)
+
+        x_indices = torch.arange(0, my_width).repeat(Rk.shape[0], Rk.shape[1], my_height, 1).cuda()
+        y_indices = torch.arange(0, my_height).repeat(Rk.shape[0], Rk.shape[1], my_width, 1).permute(0, 1, 3, 2).cuda()
+
+        get_kp_x = (Vk * x_indices).sum(dim=[2, 3])
+        get_kp_y = (Vk * y_indices).sum(dim=[2, 3])
+
+        tf_get_kp_x = (tf_Vk * x_indices).sum(dim=[2, 3])
+        tf_get_kp_y = (tf_Vk * y_indices).sum(dim=[2, 3])
+
+        kp = torch.cat([(torch.round(get_kp_x/get_zeta)).unsqueeze(2).float(), (torch.round(get_kp_y/get_zeta)).unsqueeze(2).float()], dim=2)
+        tf_kp = torch.cat([(torch.round(tf_get_kp_x/tf_get_zeta)).unsqueeze(2), (torch.round(tf_get_kp_y/tf_get_zeta)).unsqueeze(2)], dim=2)
+
+        return Ok, tf_Ok, Vk, tf_Vk, kp, tf_kp, get_zeta, tf_get_zeta
+
 class DetectionConfidenceMap2keypoint_3kp(nn.Module):
     def __init__(self):
         super(DetectionConfidenceMap2keypoint_3kp, self).__init__()
