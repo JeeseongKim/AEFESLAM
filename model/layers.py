@@ -152,3 +152,43 @@ class upsample_recon(nn.Module):
 
     def forward(self, input):
         return self.model_upsample_recon(input)
+
+class linear_kp(nn.Module):
+    def __init__(self, inp_dim, img_width, img_height):
+        super(linear_kp, self).__init__()
+        #self.linear_dec = torch.nn.Linear(inp_dim, img_width * img_height)
+        self.linear1 = torch.nn.Linear(inp_dim, 4)
+        self.linear2 = torch.nn.Linear(4, 64)
+        self.linear3 = torch.nn.Linear(64, 1024)
+        self.linear4 = torch.nn.Linear(1024, img_width*img_height)
+
+
+    def forward(self, input):
+        self.linear_kp.apply(weights_init)
+
+        out = self.linear1(input)
+        out = self.linear2(out)
+        out = self.linear3(out)
+        out = self.linear4(out)
+
+        #return self.linear_dec(input)
+        return out
+
+class linear_f(nn.Module):
+    def __init__(self, inp_dim, img_width, img_height):
+        super(linear_f, self).__init__()
+        #self.linear_dec = torch.nn.Linear(inp_dim, img_width * img_height)
+        self.linear1 = torch.nn.Linear(inp_dim, 512)
+        self.linear2 = torch.nn.Linear(512, 2048)
+        self.linear4 = torch.nn.Linear(2048, img_width*img_height)
+
+
+    def forward(self, input):
+        self.linear_f.apply(weights_init)
+
+        out = self.linear1(input)
+        out = self.linear2(out)
+        out = self.linear3(out)
+
+        #return self.linear_dec(input)
+        return out

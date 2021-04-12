@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 
 import torch
 from torch import nn
-#from torchvision.models import resnet50
-from model.resnet import *
+from torchvision.models import resnet50
+#from model.resnet import *
 import torchvision.transforms as T
 import math
 import torch
@@ -64,7 +64,7 @@ class DETR_backbone(nn.Module):
         super(DETR_backbone, self).__init__()
 
         # Resnet50 backbone
-        self.backbone = resnet50(pretrained=True)
+        self.backbone = resnet50(pretrained=False)
         del self.backbone.fc
 
         self.conv = nn.Conv2d(2048, hidden_dim, 1)
@@ -86,6 +86,96 @@ class DETR_backbone(nn.Module):
 
         return x
 
+class DETR4kp(nn.Module):
+    def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+        super(DETR4kp, self).__init__()
+
+        #Transformer
+        self.transformer = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+
+        #output positional encodings (object queries)
+        self.query_pos = nn.Embedding(num_voters, hidden_dim)
+
+        self.linear_class = MLP(hidden_dim, hidden_dim, 2, 3)
+
+        self.kp_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+
+
+    def forward(self, x, my_width, my_height):
+
+        '''
+        src = sequence to the encoder (S, N, E)
+        tgt = sequence to the decoder (T, N, E)
+        output = (T, N, E)
+        S: source sequence length (hw)
+        T: target sequence length (num_voter)
+        N: batch size
+        E: feature number (hidden_dim)
+        '''
+
+        cur_batch = x.shape[0]
+        trg_tmp = self.query_pos.weight
+        trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
+
+        h = self.transformer(x.permute(1, 0, 2), trg).transpose(0, 1) #Highlight #(1, voters = 200, 256)
+
+        hh = self.linear_class(h)
+
+        # kp = torch.sigmoid(Hk_kp)
+        kp = 1 / (1 + torch.exp(-1 * hh))
+        kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+        kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+
+        #kp_sigmoid = torch.nn.Sigmoid()
+        #kp = kp_sigmoid(hh)
+        #kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+        #kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+
+        #return hh
+        return hh, kp
+
+class DETR4f(nn.Module):
+    def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+        super(DETR4f, self).__init__()
+
+        #Transformer
+        self.transformer = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+
+        #output positional encodings (object queries)
+        self.query_pos = nn.Embedding(num_voters, hidden_dim)
+
+        self.linear_class = MLP(hidden_dim, hidden_dim, 256, 3)
+
+
+    def forward(self, x, my_width, my_height):
+
+        '''
+        src = sequence to the encoder (S, N, E)
+        tgt = sequence to the decoder (T, N, E)
+        output = (T, N, E)
+        S: source sequence length (hw)
+        T: target sequence length (num_voter)
+        N: batch size
+        E: feature number (hidden_dim)
+        '''
+
+
+        cur_batch = x.shape[0]
+        trg_tmp = self.query_pos.weight
+        trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
+
+        h = self.transformer(x.permute(1, 0, 2), trg).transpose(0, 1) #Highlight #(1, voters = 200, 256)
+
+        hh = self.linear_class(h)
+
+        desc = 1 / (1 + torch.exp(-1 * hh))
+
+        #kp_sigmoid = torch.nn.Sigmoid()
+        #kp = kp_sigmoid(hh)
+        #kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+        #kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+
+        return hh, desc
 
 class DETR2(nn.Module):
     def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):

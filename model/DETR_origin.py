@@ -2,8 +2,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from misc import *
-from DETR_backbone import build_backbone
-from transformer import build_transformer
+from model.DETR_backbone import build_backbone
+#from model.transformer import build_transformer
 
 
 class DETR_origin(nn.Module):

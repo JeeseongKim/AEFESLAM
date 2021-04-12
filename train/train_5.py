@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from torchvision.utils import save_image
 import time
 from model.layers import *
-from StackedHourglass import *
-from DetectionConfidenceMap import *
+from model.StackedHourglass import *
+from model.DetectionConfidenceMap import *
 from loss import *
 from utils import *
 from GenDescriptorMap import *
@@ -20,7 +20,7 @@ from torchvision import transforms
 import warnings
 import pytorch_msssim
 from misc import *
-from MyDETR import *
+from model.MyDETR import *
 
 warnings.filterwarnings("ignore")
 from IQA_pytorch import SSIM

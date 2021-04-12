@@ -3,12 +3,15 @@ from torch import nn
 import numpy as np
 import time
 from model.layers import *
-from model.resnet import *
+from model.MyDETR import *
+from model.DETR_backbone import *
+from model.DETR_origin import *
+#from model.resnet import *
 
 import torch.nn.functional as F
 import math
 from GenHeatmap import *
-#from torchvision.models import resnet50
+from torchvision.models import resnet50
 
 def dev_sigmoid_100(x):
     out = 4 * torch.sigmoid(100 * x) * (1 - torch.sigmoid(100 * x))
@@ -656,92 +659,51 @@ class create_softmask (nn.Module):
 
         return softmask
 
-class AttentionMap (nn.Module):
+class AttentionMap_f(nn.Module):
     def __init__(self):
-        super(AttentionMap, self).__init__()
-        #self.backbone = resnet50()
-        #del self.backbone.fc
+        super(AttentionMap_f, self).__init__()
         self.backbone = resnet50()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        del self.backbone.fc
+        #self.backbone = resnet50()
+        #self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
 
         self.conv = nn.Conv2d(2048, 256, 1)
+        self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
 
     def forward(self, input):
-        #x = self.backbone.conv1(input) ##
-        x = self.conv1(input) ##
+        #x = self.conv1(input) ##
+        x = self.backbone.conv1(input) ##
+        x = self.upsample(x)
         x = self.backbone.bn1(x)
         x = self.backbone.relu(x)
 
         x = self.backbone.layer1(x)
         x = self.backbone.layer2(x) ##
+        x = self.upsample(x)
         x = self.backbone.layer3(x) ##
+        x = self.upsample(x)
         x = self.backbone.layer4(x) ##
+        x = self.upsample(x)
 
         #channel: 2048 -> 256 (hidden_dim)
-        h = self.conv(x) #(b, k, h/8, w/8) = (b, 256, 12, 39)
+        h = self.conv(x)
 
         #positional encoding
         H, W = h.shape[-2:]
-        getattentionMap = h.flatten(2).permute(2, 0, 1)
+        positional_encoding = PositionEmbeddingSine()
+        mask, pos = positional_encoding(x, x.shape[0], x.shape[2], x.shape[3])
 
-        attention_map_1 = getattentionMap.permute(1, 0, 2)
-        attention_map_2 = torch.transpose(getattentionMap, 1, 2)
+        src = (h.flatten(2) + pos.flatten(2)).permute(2, 0, 1) #(7680, b, 256)
+
+        attention_map_1 = src.permute(1, 0, 2)
+        attention_map_2 = torch.transpose(src, 1, 2)
         attention_map = torch.matmul(attention_map_1, attention_map_2).permute(2, 1, 0)
 
-        return attention_map
+        enc_src = src
 
-class ReconDetectionMapWithKP_3kp(nn.Module):
-    def __init__(self, img_width, img_height, num_of_kp):
-        super(ReconDetectionMapWithKP_3kp, self).__init__()
-        self.img_width = img_width
-        self.img_height = img_height
-        self.num_of_kp = num_of_kp
+        return enc_src, attention_map
 
-        self.linear_2_16 = torch.nn.Linear(2, 16)
-        self.linear_16_64 = torch.nn.Linear(16, 64)
-        self.linear_64_256 = torch.nn.Linear(64, 256)
-        self.linear_256_1024 = torch.nn.Linear(256, 1024)
-        self.linear_1024_4096 = torch.nn.Linear(1024, 4096)
-        self.linear_4096_end = torch.nn.Linear(4096, self.img_width * self.img_height)
 
-        self.linear_300_256 = torch.nn.Linear(num_of_kp*3, 256)
-        self.linear_256_kpnum = torch.nn.Linear(256, num_of_kp)
-
-        '''
-        self.pre = nn.Sequential(
-            #Conv(2, 64, 3, 1, bn=True, relu=True),
-            #Conv(64, 1024, 3, 1, bn=True, relu=True),
-            Conv(200, 1024, 3, 1, bn=True, relu=True),
-            Conv(1024, 4096, 3, 1, bn=True, relu=True),
-            Residual(1024, 4096),
-            ##Pool(2, 2),
-            #Residual(4096, 4096),
-            Residual(4096, img_width * img_height)
-        )
-        '''
-    def forward(self, keypoints):
-        out = self.linear_2_16(keypoints)
-        #out = F.relu(out)
-        out = self.linear_16_64(out)
-        #out = F.relu(out)
-        out = self.linear_64_256(out)
-        #out = F.relu(out)
-        out = self.linear_256_1024(out)
-        #out = F.relu(out)
-        out = self.linear_1024_4096(out)
-        #out = F.relu(out)
-        out = self.linear_4096_end(out)
-        out = out.permute(0, 2, 1)
-
-        out = self.linear_300_256(out)
-        out = self.linear_256_kpnum(out)
-        out = out.permute(0, 2, 1)
-        out = out.cuda()
-        #out = self.pre(keypoints)
-
-        out = out.view(keypoints.shape[0], self.num_of_kp, self.img_height, self.img_width) #(b,300,h,2)
-
-        return out
 
 class ReconDetectionMapWithKP(nn.Module):
     def __init__(self, img_width, img_height, num_of_kp):
