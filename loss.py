@@ -36,7 +36,8 @@ class loss_separation(nn.Module):
         keypoints = keypoints.float()
 
         for i in range(num_of_kp):
-            cur_loss = F.mse_loss(keypoints[:, i, :].unsqueeze(1), keypoints, reduction='sum')
+            #cur_loss = F.mse_loss(keypoints[:, i, :].unsqueeze(1), keypoints, reduction='sum')
+            cur_loss = F.mse_loss(keypoints[:, i, :].unsqueeze(1), keypoints)
             sep_loss = sep_loss + cur_loss
 
         #self.sep_loss_output = torch.exp(-0.0001 * sep_loss)
@@ -48,10 +49,13 @@ class loss_separation(nn.Module):
         #self.sep_loss_output = 4*torch.sigmoid(1e-4*sep_loss)*(1-torch.sigmoid(1e-4*sep_loss))
         #self.sep_loss_output = 4 * torch.sigmoid(1e-5 * sep_loss) * (1 - torch.sigmoid(1e-5 * sep_loss))
         #self.sep_loss_output = 4 * torch.sigmoid(0.5 * 1e-6 * sep_loss) * (1 - torch.sigmoid(0.5 * 1e-6 * sep_loss))
-        self.sep_loss_output = 4 * torch.sigmoid(1e-7 * sep_loss) * (1 - torch.sigmoid(1e-7 * sep_loss))
+        #self.sep_loss_output = 4 * torch.sigmoid(1e-7 * sep_loss) * (1 - torch.sigmoid(1e-7 * sep_loss))
         #self.sep_loss_output = 4 * torch.sigmoid(1e-8 * sep_loss) * (1 - torch.sigmoid(1e-8 * sep_loss))
         #self.sep_loss_output = 4 * torch.sigmoid(1e-6 * sep_loss) * (1 - torch.sigmoid(1e-6 * sep_loss))
         #self.sep_loss_output = 10 * speed_sigmoid(1e-2*sep_loss) * (1 - speed_sigmoid(1e-2*sep_loss))
+        #self.sep_loss_output = torch.exp(-0.00001*sep_loss)
+        self.sep_loss_output = torch.exp(-1e-5*sep_loss)
+        #self.sep_loss_output = 4 * torch.sigmoid(1e-9 * sep_loss) * (1 - torch.sigmoid(1e-9 * sep_loss))
 
     def forward(self):
         return self.sep_loss_output
