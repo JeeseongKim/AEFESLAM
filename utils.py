@@ -37,6 +37,55 @@ class make_transformation_M(nn.Module):
 
         return transformation_g
 
+def get_kp (H, my_height, my_width):
+
+    #kp = torch.sigmoid(Hk_kp)
+    kp = 1/(1+torch.exp(-1*H))
+    kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+    kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+
+    return kp
+
+
+
+class my_dataset_originalImg(Dataset):
+    #def __init__(self, transform=None):
+    def __init__(self, my_width, my_height):
+        self.dataset_img = []
+        self.dataset_filename = []
+        self.kp_img = []
+        self.input_height = my_height
+        self.input_width = my_width
+        #lg dataset(96,128))
+
+        #for filename in (sorted(glob.glob('./Kitti/sequences/00/image_2/*.png'))):
+        for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('./Kitti_tmp/sequences/05/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('./data/*.jpg'))):
+            im = Image.open(filename)
+
+            img_rsz = cv2.resize(np.array(im), (self.input_width, self.input_height)) #opencv image: (h,w,C), tensor image: (c, h, w)
+            img_tensor_input = transforms.ToTensor()(img_rsz)# (3,192,256)
+            self.dataset_img.append(img_tensor_input)
+
+            #img_rsz_fn = torchvision.transforms.Resize((my_height, my_width), 2)
+            #img_rsz = img_rsz_fn(im)
+            #img_rsz = transforms.ToTensor()(img_rsz)
+            #self.dataset_img.append(img_rsz)
+
+            #self.dataset_filename.append(filename.split('.')[1].split('/')[2])
+            self.dataset_filename.append(filename.split('/')[5].split('.')[0])
+            self.kp_img.append(img_rsz)
+
+        self.len = len(self.dataset_img)
+        a = torch.utils.data.get_worker_info()
+
+    def __getitem__(self, index):
+        return self.dataset_img[index], self.dataset_filename[index], self.kp_img[index]
+
+    def __len__(self):
+        return len(self.dataset_img)
+
 class my_dataset(Dataset):
     #def __init__(self, transform=None):
     def __init__(self, my_width, my_height):
@@ -51,10 +100,11 @@ class my_dataset(Dataset):
         for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./Kitti_tmp/sequences/00/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./data/*.jpg'))):
+        #for filename in (sorted(glob.glob('./Oxford/oxbuild_images/*.jpg'))):
             im = Image.open(filename)
 
             img_rsz = cv2.resize(np.array(im), (self.input_width, self.input_height)) #opencv image: (h,w,C), tensor image: (c, h, w)
-            img_tensor_input = transforms.ToTensor()(img_rsz)  # (3,192,256)
+            img_tensor_input = transforms.ToTensor()(img_rsz)# (3,192,256)
             self.dataset_img.append(img_tensor_input)
 
             #img_rsz_fn = torchvision.transforms.Resize((my_height, my_width), 2)
@@ -63,7 +113,9 @@ class my_dataset(Dataset):
             #self.dataset_img.append(img_rsz)
 
             #self.dataset_filename.append(filename.split('.')[1].split('/')[2])
-            self.dataset_filename.append(filename.split('/')[5].split('.')[0])
+            self.dataset_filename.append(filename.split('/')[5].split('.')[0]) #KITTI
+
+            #self.dataset_filename.append(filename.split('/')[3]) #oxfor building
             self.kp_img.append(img_rsz)
 
         self.len = len(self.dataset_img)
@@ -125,3 +177,4 @@ class multivariate_normal(nn.Module):
     def forward(self, x, d, mean, covariance):
         x_m = x - mean
         return (1. / (np.sqrt((2 * np.pi)**d * np.linalg.det(covariance))) * np.exp(-(np.linalg.solve(covariance, x_m).T.dot(x_m)) / 2))
+
