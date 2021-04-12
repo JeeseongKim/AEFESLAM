@@ -3,24 +3,19 @@ from torch import nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
 import time
-
-from model.DetectionConfidenceMap import *
 from model.layers import *
-from model.DETR_backbone import *
-from model.resnet import *
-from model.transformer import *
-from model.CnnKPNetwork import *
-from model.DETR_backbone import *
-from model.GenDescriptorMap import *
-from model.MyDETR import *
-from model.StackedHourglass import *
+from model import *
 from loss import *
 from utils import *
 from GenDescriptorMap import *
 import os
 import numpy as np
 from tqdm import tqdm
-
+import torchvision
+import random
+import seaborn
+import matplotlib.pyplot as plt
+from torchvision import transforms
 import warnings
 import pytorch_msssim
 warnings.filterwarnings("ignore")
@@ -49,7 +44,7 @@ plot_recon = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title=
 torch.multiprocessing.set_start_method('spawn', force=True)
 
 #########################################parameter#########################################
-num_of_kp = 200
+num_of_kp = 400
 voters = num_of_kp
 num_queries = voters
 
@@ -79,20 +74,58 @@ dtype = torch.FloatTensor
 def train():
     model_start = time.time()
 
+    model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=stacked_hourglass_inpdim_kp, oup_dim=stacked_hourglass_oupdim_kp, bn=False, increase=0).cuda()
+    model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
+    optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
     model_AttentionMap = AttentionMap(hidden_dim=256).cuda()
     model_AttentionMap = nn.DataParallel(model_AttentionMap).cuda()
     optimizer_AttentionMap = torch.optim.AdamW(model_AttentionMap.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
+    model_get_kp = getKP_attention().cuda()
+    model_get_kp = nn.DataParallel(model_get_kp).cuda()
+    optimizer_get_kp = torch.optim.AdamW(model_get_kp.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
     model_DETR = DETR2(num_voters=voters, hidden_dim=hidden_dim, nheads=8, num_encoder_layers=6, num_decoder_layers=6).cuda()
     model_DETR = nn.DataParallel(model_DETR).cuda()
     optimizer_DETR = torch.optim.AdamW(model_DETR.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    model_simple_rsz = simple_rsz(inp_channel=480, oup_channel=hidden_dim).cuda()
+    model_simple_rsz = nn.DataParallel(model_simple_rsz).cuda()
+    optimizer_simple_rsz = torch.optim.AdamW(model_simple_rsz.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    model_MakeDesc = MakeDesc(inp_channel=my_width*my_height, oup_channel=feature_dimension).cuda()
+    model_MakeDesc = nn.DataParallel(model_MakeDesc).cuda()
+    optimizer_MakeDesc = torch.optim.AdamW(model_MakeDesc.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    model_recon_MakeDesc = Recon_MakeDesc(inp_channel=feature_dimension, oup_channel=my_width*my_height).cuda()
+    model_recon_MakeDesc = nn.DataParallel(model_recon_MakeDesc).cuda()
+    optimizer_Recon_MakeDesc = torch.optim.AdamW(model_recon_MakeDesc.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    model_ReconDetection = Recon_Detection(inp_channel=2, oup_channel=hidden_dim)
+    model_ReconDetection = nn.DataParallel(model_ReconDetection).cuda()
+    optimizer_ReconDetection = torch.optim.AdamW(model_ReconDetection.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    model_into_Img = IntoImg(hidden_dim=hidden_dim, img_width=my_width, img_height=my_height)
+    model_into_Img = nn.DataParallel(model_into_Img).cuda()
+    optimizer_intoImg = torch.optim.AdamW(model_into_Img.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(num_of_kp=num_of_kp, nstack=num_nstack, inp_dim=stacked_hourglass_inpdim_kp, oup_dim=3, bn=False, increase=0)
     model_StackedHourglassImgRecon = nn.DataParallel(model_StackedHourglassImgRecon).cuda()
     #optimizer_ImgRecon = torch.optim.AdamW(model_StackedHourglassImgRecon.parameters(), lr=learning_rate,weight_decay=weight_decay)
     optimizer_ImgRecon = torch.optim.Adam(model_StackedHourglassImgRecon.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    #lr_scheduler_optimizer1 = torch.optim.lr_scheduler.StepLR(optimizer_StackedHourglass_kp, lr_drop)
+    lr_scheduler_optimizer1 = torch.optim.lr_scheduler.StepLR(optimizer_StackedHourglass_kp, lr_drop)
+    lr_scheduler_optimizer2 = torch.optim.lr_scheduler.StepLR(optimizer_AttentionMap, lr_drop)
+    lr_scheduler_optimizer3 = torch.optim.lr_scheduler.StepLR(optimizer_get_kp, lr_drop)
+    lr_scheduler_optimizer4 = torch.optim.lr_scheduler.StepLR(optimizer_DETR, lr_drop)
+    lr_scheduler_optimizer5 = torch.optim.lr_scheduler.StepLR(optimizer_simple_rsz, lr_drop)
+    lr_scheduler_optimizer6 = torch.optim.lr_scheduler.StepLR(optimizer_MakeDesc, lr_drop)
+    lr_scheduler_optimizer7 = torch.optim.lr_scheduler.StepLR(optimizer_Recon_MakeDesc, lr_drop)
+    lr_scheduler_optimizer8 = torch.optim.lr_scheduler.StepLR(optimizer_ReconDetection, lr_drop)
+    lr_scheduler_optimizer9 = torch.optim.lr_scheduler.StepLR(optimizer_intoImg, lr_drop)
+    lr_scheduler_optimizer10 = torch.optim.lr_scheduler.StepLR(optimizer_ImgRecon, lr_drop)
+
 
     ###################################################################################################################
     #call checkpoint
@@ -157,6 +190,12 @@ def train():
             cur_batch = aefe_input.shape[0]
 
             ##########################################ENCODER##########################################
+            #theta = random.uniform(-10, 10)  # rotating theta
+            #my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
+            #tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
+
+            #Rk = model_StackedHourglassForKP(aefe_input)[:, num_nstack - 1, :, :, :]
+
             attention_map, self_attention_feature_maps, kp_SAmap = model_AttentionMap(aefe_input)  # (4, 256, 480) #convolutional feature maps
             #(2, 480, 480), (2, 480, 256), (2, 48, 160)
             H = model_DETR(self_attention_feature_maps, my_width, my_height) #(b, hw=480, hw=480), (b, hw=480), (b, 200, 256)(b, 200, 2)
