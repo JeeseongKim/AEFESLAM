@@ -681,9 +681,9 @@ class AttentionMap_f(nn.Module):
         x = self.backbone.layer2(x) ##
         x = self.upsample(x)
         x = self.backbone.layer3(x) ##
-        x = self.upsample(x)
+        #x = self.upsample(x)
         x = self.backbone.layer4(x) ##
-        x = self.upsample(x)
+        #x = self.upsample(x)
 
         #channel: 2048 -> 256 (hidden_dim)
         h = self.conv(x)
@@ -693,15 +693,13 @@ class AttentionMap_f(nn.Module):
         positional_encoding = PositionEmbeddingSine()
         mask, pos = positional_encoding(x, x.shape[0], x.shape[2], x.shape[3])
 
-        src = (h.flatten(2) + pos.flatten(2)).permute(2, 0, 1) #(7680, b, 256)
-
-        attention_map_1 = src.permute(1, 0, 2)
-        attention_map_2 = torch.transpose(src, 1, 2)
+        src = (h.flatten(2) + pos.flatten(2)) #(b, 256, 480)
+        src_ = src.permute(2, 0, 1)
+        attention_map_1 = src_.permute(1, 0, 2)
+        attention_map_2 = torch.transpose(attention_map_1, 1, 2)
         attention_map = torch.matmul(attention_map_1, attention_map_2).permute(2, 1, 0)
 
-        enc_src = src
-
-        return enc_src, attention_map
+        return src, attention_map
 
 
 

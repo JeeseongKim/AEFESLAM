@@ -164,7 +164,10 @@ class linear_kp(nn.Module):
 
 
     def forward(self, input):
-        self.linear_kp.apply(weights_init)
+        self.linear1.apply(weights_init)
+        self.linear2.apply(weights_init)
+        self.linear3.apply(weights_init)
+        self.linear4.apply(weights_init)
 
         out = self.linear1(input)
         out = self.linear2(out)
@@ -175,20 +178,23 @@ class linear_kp(nn.Module):
         return out
 
 class linear_f(nn.Module):
-    def __init__(self, inp_dim, img_width, img_height):
+    def __init__(self, inp_dim, REimg_height, REimg_width):
         super(linear_f, self).__init__()
-        #self.linear_dec = torch.nn.Linear(inp_dim, img_width * img_height)
-        self.linear1 = torch.nn.Linear(inp_dim, 512)
-        self.linear2 = torch.nn.Linear(512, 2048)
-        self.linear4 = torch.nn.Linear(2048, img_width*img_height)
+        self.img_width = REimg_width
+        self.img_height = REimg_height
+
+        self.linear1 = torch.nn.Linear(inp_dim, REimg_width*REimg_height)
+        self.conv = nn.Conv2d(200, 256, 1)
 
 
     def forward(self, input):
-        self.linear_f.apply(weights_init)
+        self.linear1.apply(weights_init)
+        self.conv.apply(weights_init)
+        #self.linear2.apply(weights_init)
+        #self.linear4.apply(weights_init)
 
         out = self.linear1(input)
-        out = self.linear2(out)
-        out = self.linear3(out)
-
+        out = out.view(out.shape[0], out.shape[1], self.img_height, self.img_width)
+        out = self.conv(out)
         #return self.linear_dec(input)
         return out

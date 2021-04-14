@@ -87,7 +87,7 @@ class DETR_backbone(nn.Module):
         return x
 
 class DETR4kp(nn.Module):
-    def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+    def __init__(self, num_voters, hidden_dim=200, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
         super(DETR4kp, self).__init__()
 
         #Transformer
@@ -98,7 +98,7 @@ class DETR4kp(nn.Module):
 
         self.linear_class = MLP(hidden_dim, hidden_dim, 2, 3)
 
-        self.kp_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        #self.kp_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
 
     def forward(self, x, my_width, my_height):
@@ -117,7 +117,7 @@ class DETR4kp(nn.Module):
         trg_tmp = self.query_pos.weight
         trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
 
-        h = self.transformer(x.permute(1, 0, 2), trg).transpose(0, 1) #Highlight #(1, voters = 200, 256)
+        h = self.transformer(x.permute(2, 0, 1), trg).transpose(0, 1)
 
         hh = self.linear_class(h)
 
@@ -126,12 +126,6 @@ class DETR4kp(nn.Module):
         kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
         kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
 
-        #kp_sigmoid = torch.nn.Sigmoid()
-        #kp = kp_sigmoid(hh)
-        #kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
-        #kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
-
-        #return hh
         return hh, kp
 
 class DETR4f(nn.Module):
@@ -164,7 +158,7 @@ class DETR4f(nn.Module):
         trg_tmp = self.query_pos.weight
         trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
 
-        h = self.transformer(x.permute(1, 0, 2), trg).transpose(0, 1) #Highlight #(1, voters = 200, 256)
+        h = self.transformer(x.permute(2, 0, 1), trg).transpose(0, 1) #Highlight #(1, voters = 200, 256)
 
         hh = self.linear_class(h)
 

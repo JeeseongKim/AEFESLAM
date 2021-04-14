@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from utils import my_dataset, saveKPimg, make_transformation_M
 import numpy as np
 import pdb
-from DetectionConfidenceMap import *
+from model.DetectionConfidenceMap import *
 
 class loss_concentration(nn.Module):
     def __init__(self, my_map):
