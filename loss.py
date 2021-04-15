@@ -20,7 +20,7 @@ class loss_concentration(nn.Module):
         w_var = torch.var(my_map, dim=3).sum(dim=[0, 1])
         var = h_var.sum() + w_var.sum()
         #self.conc_loss = torch.exp(0.5*var) ** 0.5
-        self.conc_loss = 3 * (var ** 0.5)
+        self.conc_loss = 0.003 * (var ** 0.5)
         #self.conc_loss = (var ** 2)
 
 

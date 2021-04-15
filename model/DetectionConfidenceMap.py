@@ -643,6 +643,57 @@ class ReconDetectionConfidenceMap(nn.Module):
 
         return reconDetectionMap
 
+
+class ReconWithKP(nn.Module):
+    def __init__(self):
+        super(ReconWithKP, self).__init__()
+
+        self.epsilon_scale = 1e-5
+        self.correlation = 0.3
+        self.std_x = 5
+        self.std_y = 5
+
+        self.cov = torch.zeros(2, 2)
+        self.cov[0, 0] = self.std_x ** 2
+        self.cov[0, 1] = self.correlation * self.std_x * self.std_y
+        self.cov[1, 0] = self.cov[0, 1]
+        self.cov[1, 1] = self.std_y ** 2
+
+    def forward(self, keypoints, my_height, my_width):
+
+        cur_batch = keypoints.shape[0]
+        num_of_kp = keypoints.shape[1]
+        #ReconScoreMap = torch.zeros(cur_batch, num_of_kp, my_height, my_width).cuda()
+
+        MyMean = keypoints
+        MyCov = self.cov
+        #MyDistribution = torch.distributions.multivariate_normal.MultivariateNormal(MyMean, MyCov)
+        #tmp = MyDistribution.sample()
+
+        x_indices = torch.arange(0, my_width).repeat(cur_batch, num_of_kp, my_height, 1).cuda()
+        y_indices = torch.arange(0, my_height).repeat(cur_batch, num_of_kp, my_width, 1).permute(0, 1, 3, 2).cuda()
+
+        x_all = x_indices.flatten(2).unsqueeze(3)
+        y_all = y_indices.flatten(2).unsqueeze(3)
+        myXY = torch.cat([x_all, y_all], dim=3)
+
+        mu_x = MyMean[:, :, 0].unsqueeze(2)
+        mu_y = MyMean[:, :, 1].unsqueeze(2)
+
+        xx = myXY[:, :, :, 0]
+        yy = myXY[:, :, :, 1]
+
+        e1 = xx - mu_x #(b, 200, 7680)
+        e2 = yy - mu_y
+
+        denum = (1/(2 * 3.14 * self.std_x * self.std_y * math.sqrt(1 - self.correlation * self.correlation)))
+        tmp1 = -0.5 * (1 / (1 - self.correlation * self.correlation))
+        tmp2 = torch.pow((e1 / self.std_x), 2) - (2*self.correlation * (e1 / self.std_x) * (e2 / self.std_y)) + torch.pow((e2 / self.std_y), 2)
+        ReconKPMap = denum * torch.exp(tmp1 * tmp2)
+        ReconKPMap = ReconKPMap.view(cur_batch, num_of_kp, my_height, my_width)
+
+        return ReconKPMap
+
 class create_softmask (nn.Module):
     def __init__(self):
         super(create_softmask, self).__init__()
@@ -725,59 +776,6 @@ class ReconDetectionMapWithKP(nn.Module):
         out = F.relu(self.linear_1024_4096(out))
         out = F.relu(self.linear_4096_end(out))
         out = out.view(keypoints.shape[0], self.num_of_kp, self.img_height, self.img_width) #(b,300,h,2)
-
-        return out
-
-class ReconDetectionMapWithKP_Res(nn.Module):
-    def __init__(self, img_width, img_height, num_of_kp):
-        super(ReconDetectionMapWithKP_Res, self).__init__()
-        self.img_width = img_width
-        self.img_height = img_height
-        self.num_of_kp = num_of_kp
-
-        self.linear1 = torch.nn.Linear(2, 3)
-        self.linear2 = torch.nn.Linear(self.num_of_kp, 32*self.num_of_kp) #num_of_kp, 32*num_of_kp
-
-        #self.net = ResNet(Bottleneck, [3, 4, 23, 3])
-        self.net = ResNet(BasicBlock, [3, 4, 6, 3])
-
-    def forward(self, keypoints):
-        x = F.relu(self.linear1(keypoints)) #(b,k,3)
-        x = x.permute(0, 2, 1).unsqueeze(3) #(b,3,k)
-        #x = x.permute(0, 2, 1) #(b,3,k)
-        #x = F.relu(self.linear2(x)).unsqueeze(3) #(b,3,32k,1)
-
-        out = self.net(x, self.img_height, self.img_width, keypoints.shape[1])
-
-        return out
-
-
-class ReconDetectionMapWithF(nn.Module):
-    def __init__(self, img_width, img_height, feature_dimension):
-        super(ReconDetectionMapWithF, self).__init__()
-        self.img_width = img_width
-        self.img_height = img_height
-        self.fd = feature_dimension
-        self.linear_fd_256 = torch.nn.Linear(self.fd, 256)
-        self.linear_256_256 = torch.nn.Linear(256, 256)
-        self.linear_256_1024 = torch.nn.Linear(256, 1024)
-        self.linear_1024_4096 = torch.nn.Linear(1024, 4096)
-        self.linear_4096_end = torch.nn.Linear(4096, self.img_width * self.img_height)
-
-    def forward(self, fk):
-        #fk (b,k,f=256)
-
-        out = self.linear_fd_256(fk)
-        out = F.relu(out)
-        out = self.linear_256_256(out)
-        out = F.relu(out)
-        out = self.linear_256_1024(out)
-        out = F.relu(out)
-        out = self.linear_1024_4096(out)
-        out = F.relu(out)
-        out = self.linear_4096_end(out)
-
-        out = out.view(fk.shape[0], fk.shape[1], self.img_height, self.img_width)
 
         return out
 

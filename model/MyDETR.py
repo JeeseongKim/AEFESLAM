@@ -24,7 +24,8 @@ class PositionEmbeddingSine(nn.Module):
     This is a more standard version of the position embedding, very similar to the one
     used by the Attention is all you need paper, generalized to work on images.
     """
-    def __init__(self, num_pos_feats=128, temperature=10000, normalize=False, scale=None):
+    #def __init__(self, num_pos_feats=128, temperature=10000, normalize=False, scale=None):
+    def __init__(self, num_pos_feats=100, temperature=10000, normalize=False, scale=None):
         super().__init__()
         self.num_pos_feats = num_pos_feats
         self.temperature = temperature
@@ -69,22 +70,62 @@ class DETR_backbone(nn.Module):
 
         self.conv = nn.Conv2d(2048, hidden_dim, 1)
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-
+        self.upsample = nn.Upsample(scale_factor=2, mode='bicubic')
 
     def forward(self, inputs):
         # x = self.backbone.conv1(inputs)
+        inputs = inputs.permute() #inputs = Rk + posRk (b,k,48,160)
 
         x = self.conv1(inputs)
         x = self.backbone.bn1(x)
         x = self.backbone.relu(x)
+        x = self.upsample(x)
         # x = self.backbone.maxpool(x)
 
         x = self.backbone.layer1(x)
         x = self.backbone.layer2(x)
+        x = self.upsample(x)
         x = self.backbone.layer3(x)
+        x = self.upsample(x)
         x = self.backbone.layer4(x)
+        x = self.upsample(x)
 
         return x
+
+
+class ENCinp(nn.Module):
+    def __init__(self, my_height, my_width, dim1=2048, dim2=256):
+        super(ENCinp, self).__init__()
+
+        # Resnet50 backbone
+        self.backbone = resnet50(pretrained=False)
+        del self.backbone.fc
+
+        self.conv1 = nn.Conv2d(my_height*my_width, dim1, 1)
+        self.conv2 = nn.Conv2d(dim1, dim2, 1)
+        self.conv3_kp = nn.Conv2d(dim2, dim2, 1)
+        self.conv3_f = nn.Conv2d(dim2, dim2, 1)
+
+    def forward(self, inputs):
+        # x = self.backbone.conv1(inputs)
+        inputs = inputs.flatten(2) #inputs = Rk + posRk (b,k,7680)
+        inputs = inputs.permute(0, 2, 1)
+        inputs = inputs.unsqueeze(3)
+
+        x = self.conv1(inputs)
+        x = self.conv2(x)
+
+        x_kp = F.relu(self.conv3_kp(x))
+        x_f = F.relu(self.conv3_f(x))
+
+        #x_kp = self.backbone.bn1(x_kp)
+        #x_kp = self.backbone.relu(x_kp)
+
+        #x_f = self.backbone.bn1(x_f)
+        #x_f = self.backbone.relu(x_f)
+
+        return x_kp.squeeze(3), x_f.squeeze(3)
+
 
 class DETR4kp(nn.Module):
     def __init__(self, num_voters, hidden_dim=200, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
@@ -127,6 +168,62 @@ class DETR4kp(nn.Module):
         kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
 
         return hh, kp
+
+
+class DETR4kpNf(nn.Module):
+    def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+        super(DETR4kpNf, self).__init__()
+
+        #Transformer
+        self.transformer_kp = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+        self.transformer_f = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+
+        #output positional encodings (object queries)
+        self.query_pos = nn.Embedding(num_voters, hidden_dim)
+
+        self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.linear_class_f = MLP(hidden_dim, hidden_dim, 256, 3)
+
+
+    def forward(self, enc_kp, enc_f, my_height, my_width):
+
+        '''
+        src = sequence to the encoder (S, N, E)
+        tgt = sequence to the decoder (T, N, E)
+        output = (T, N, E)
+        S: source sequence length (hw)
+        T: target sequence length (num_voter)
+        N: batch size
+        E: feature number (hidden_dim)
+        '''
+
+        cur_batch = enc_kp.shape[0]
+
+        trg_tmp = self.query_pos.weight
+        trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
+
+        input_kp = enc_kp.permute(2, 0, 1)
+        input_f = enc_f.permute(2, 0, 1)
+
+        h_kp = self.transformer_kp(input_kp, trg)
+        h_f = self.transformer_f(input_f, trg)
+
+        hh_kp = self.linear_class_kp(h_kp)
+        hh_f = self.linear_class_f(h_f)
+
+        desc = 1 / (1 + torch.exp(-1 * hh_f))
+
+        kp = 1 / (1 + torch.exp(-1 * hh_kp))
+        kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+        kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+
+        kp = kp.permute(1, 0, 2)
+        desc = desc.permute(1, 0, 2)
+
+        return kp, desc
+
+
+
 
 class DETR4f(nn.Module):
     def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):

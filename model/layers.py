@@ -198,3 +198,25 @@ class linear_f(nn.Module):
         out = self.conv(out)
         #return self.linear_dec(input)
         return out
+
+class linear_s(nn.Module):
+    def __init__(self, inp_dim, my_height, my_width):
+        super(linear_s, self).__init__()
+        self.img_width = my_width
+        self.img_height = my_height
+
+        self.linear1 = torch.nn.Linear(inp_dim, my_height*my_width)
+        self.conv = nn.Conv2d(200, 200, 1)
+
+
+    def forward(self, input):
+        self.linear1.apply(weights_init)
+        self.conv.apply(weights_init)
+        #self.linear2.apply(weights_init)
+        #self.linear4.apply(weights_init)
+
+        out = self.linear1(input)
+        out = out.view(out.shape[0], out.shape[1], self.img_height, self.img_width)
+        out = self.conv(out)
+        #return self.linear_dec(input)
+        return out
