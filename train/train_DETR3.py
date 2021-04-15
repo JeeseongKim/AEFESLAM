@@ -1,3 +1,5 @@
+##Train DETR3 has 2 encoders for keypoints and descriptors, and 1 decoder which shares target(=voters)
+
 from model.StackedHourglass import *
 from loss import *
 from utils import *
@@ -48,7 +50,7 @@ stacked_hourglass_oupdim_kp = num_of_kp  # number of my keypoints
 num_nstack = 8
 
 learning_rate = 1e-4  # 1e-3#1e-4 #1e-3
-weight_decay = 1e-4  # 1e-2#1e-5 #1e-5 #5e-4
+weight_decay = 1e-5  # 1e-2#1e-5 #1e-5 #5e-4
 lr_drop = 200
 ###########################################################################################
 concat_recon = []
@@ -84,7 +86,7 @@ def train():
     lr_scheduler_optimizer1 = torch.optim.lr_scheduler.StepLR(optimizer_StackedHourglass_kp, lr_drop)
     lr_scheduler_optimizer2 = torch.optim.lr_scheduler.StepLR(optimizer_ENC_inp, lr_drop)
     lr_scheduler_optimizer3 = torch.optim.lr_scheduler.StepLR(optimizer_DETR_kp_f, lr_drop)
-    lr_scheduler_optimizer4 = torch.optim.lr_scheduler.StepLR(optimizer_ImgRecon, lr_drop)
+    lr_scheduler_optimizer4 = torch.optim.lr_scheduler.StepLR(optimizer_recon_s, lr_drop)
     lr_scheduler_optimizer5 = torch.optim.lr_scheduler.StepLR(optimizer_ImgRecon, lr_drop)
 
     '''
@@ -179,15 +181,23 @@ def train():
             kp, desc = model_DETR_kp_f(Enc_kp, Enc_f, my_height, my_width)
 
             ##########################################DECODER##########################################
-            fn_ReconKp = ReconWithKP()
-            recon_kp = fn_ReconKp(kp, my_height, my_width) #(b,200,48,160)
+            fn_ReconKp = ReconWithKP(my_height, my_width)
+            recon_kp_1 = fn_ReconKp(kp, 0.2) #(b,200,48,160)
+            recon_kp_2 = fn_ReconKp(kp, 0.4) #(b,200,48,160)
+            recon_kp_3 = fn_ReconKp(kp, 0.6) #(b,200,48,160)
+            recon_kp_4 = fn_ReconKp(kp, 0.8) #(b,200,48,160)
+            recon_kp_5 = fn_ReconKp(kp, 1.0) #(b,200,48,160)
 
             #kpNdesc = torch.cat([kp, desc], dim=2)
             Recon_Desc = model_recon_s(desc)
 
-            Recon_feature = Recon_Desc * recon_kp
+            Recon_feature_1 = F.elu(Recon_Desc * recon_kp_1)
+            Recon_feature_2 = F.elu(Recon_Desc * recon_kp_2)
+            Recon_feature_3 = F.elu(Recon_Desc * recon_kp_3)
+            Recon_feature_4 = F.elu(Recon_Desc * recon_kp_4)
+            Recon_feature_5 = F.elu(Recon_Desc * recon_kp_5)
 
-            recon_input = torch.cat([recon_kp, Recon_feature], dim=1)
+            recon_input = torch.cat([recon_kp_1, Recon_feature_1 , recon_kp_2, Recon_feature_2, recon_kp_3, Recon_feature_3, recon_kp_4, Recon_feature_4, recon_kp_5, Recon_feature_5], dim=1)
             reconImg = model_StackedHourglassImgRecon(recon_input)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
@@ -201,15 +211,21 @@ def train():
             cur_sep_loss = fn_loss_separation()
 
             #Recon img loss
-            cur_recon_loss_l2 = F.mse_loss(reconImg, aefe_input)
-            criterion = SSIM()
-            cur_recon_loss_ssim = criterion(reconImg, aefe_input)
-            cur_recon_loss = (cur_recon_loss_l2*5 + cur_recon_loss_ssim)
+            std_color = 0.05
+            n_reconImg = torch.sigmoid(reconImg)
+            n_inputImg = torch.sigmoid(aefe_input)
 
+            cur_recon_loss_l2 = F.mse_loss(n_reconImg, n_inputImg)
+            criterion = SSIM()
+
+            cur_recon_loss_ssim = criterion(n_reconImg, n_inputImg)
+            tmp_recon_loss = (cur_recon_loss_l2*35 + cur_recon_loss_ssim)
+
+            cur_recon_loss = (1/(std_color ** 2))*tmp_recon_loss + math.log(2 * math.pi * std_color * std_color)
 
             p_sep = 1.0
             p_recon_conc = 1.0
-            p_recon_img = 1.0
+            p_recon_img = 0.003
 
 
             my_sep_loss = p_sep * cur_sep_loss

@@ -1,23 +1,11 @@
-from PIL import Image
-import requests
-import matplotlib.pyplot as plt
-
-import torch
-from torch import nn
 from torchvision.models import resnet50
-#from model.resnet import *
-import torchvision.transforms as T
-import math
-import torch
-from torch import nn
 import torch.nn.functional as F
 import copy
 from typing import Optional, List
 
 from torch import nn, Tensor
-from misc import NestedTensor
 from position_encoding import *
-import matplotlib.pyplot as plt
+from model.layers import weights_init
 
 class PositionEmbeddingSine(nn.Module):
     """
@@ -91,6 +79,35 @@ class DETR_backbone(nn.Module):
         x = self.upsample(x)
 
         return x
+
+class ENCinp_1(nn.Module):
+    def __init__(self, my_height, my_width, dim1=2048, dim2=256):
+        super(ENCinp_1, self).__init__()
+
+        # Resnet50 backbone
+        self.backbone = resnet50(pretrained=False)
+        del self.backbone.fc
+
+        self.conv1 = nn.Conv2d(my_height*my_width, dim1, 1)
+        self.conv2 = nn.Conv2d(dim1, dim2, 1)
+        self.conv3 = nn.Conv2d(dim2, dim2, 1)
+
+    def forward(self, inputs):
+        self.conv1.apply(weights_init)
+        self.conv2.apply(weights_init)
+        self.conv3.apply(weights_init)
+
+        # x = self.backbone.conv1(inputs)
+        inputs = inputs.flatten(2) #inputs = Rk + posRk (b,k,7680)
+        inputs = inputs.permute(0, 2, 1)
+        inputs = inputs.unsqueeze(3)
+
+        x = self.conv1(inputs)
+        x = self.conv3(x)
+
+        out = F.relu(self.conv3(x))
+
+        return out.squeeze(3)
 
 
 class ENCinp(nn.Module):
@@ -213,7 +230,7 @@ class DETR4kpNf(nn.Module):
 
         desc = 1 / (1 + torch.exp(-1 * hh_f))
 
-        kp = 1 / (1 + torch.exp(-1 * hh_kp))
+        kp = 1 / (1 + torch.exp(-10 * hh_kp))
         kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
         kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
 
@@ -222,8 +239,60 @@ class DETR4kpNf(nn.Module):
 
         return kp, desc
 
+class DETR_1E2D(nn.Module):
+    def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+        super(DETR_1E2D, self).__init__()
+
+        #Transformer
+        self.transformer_kp = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+        self.transformer_f = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+
+        #output positional encodings (object queries)
+        self.query_pos_kp = nn.Embedding(num_voters, hidden_dim)
+        self.query_pos_f = nn.Embedding(num_voters, hidden_dim)
+
+        self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.linear_class_f = MLP(hidden_dim, hidden_dim, 256, 3)
 
 
+    def forward(self, encoder_input, my_height, my_width):
+
+        '''
+        src = sequence to the encoder (S, N, E)
+        tgt = sequence to the decoder (T, N, E)
+        output = (T, N, E)
+        S: source sequence length (hw)
+        T: target sequence length (num_voter)
+        N: batch size
+        E: feature number (hidden_dim)
+        '''
+
+        cur_batch = encoder_input.shape[0]
+
+        trg_tmp_kp = self.query_pos_kp.weight
+        trg_kp = trg_tmp_kp.unsqueeze(1).repeat(1, cur_batch, 1)
+
+        trg_tmp_f = self.query_pos_f.weight
+        trg_f = trg_tmp_f.unsqueeze(1).repeat(1, cur_batch, 1)
+
+        input = encoder_input.permute(2, 0, 1)
+
+        h_kp = self.transformer_kp(input, trg_kp)
+        h_f = self.transformer_f(input, trg_f)
+
+        hh_kp = self.linear_class_kp(h_kp)
+        hh_f = self.linear_class_f(h_f)
+
+        desc = 1 / (1 + torch.exp(-1 * hh_f))
+
+        kp = 1 / (1 + torch.exp(-10 * hh_kp))
+        kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+        kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+
+        kp = kp.permute(1, 0, 2)
+        desc = desc.permute(1, 0, 2)
+
+        return kp, desc
 
 class DETR4f(nn.Module):
     def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):

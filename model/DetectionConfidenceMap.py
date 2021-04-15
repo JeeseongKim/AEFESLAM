@@ -645,33 +645,31 @@ class ReconDetectionConfidenceMap(nn.Module):
 
 
 class ReconWithKP(nn.Module):
-    def __init__(self):
+    def __init__(self, my_height, my_width):
         super(ReconWithKP, self).__init__()
+        self.my_height = my_height
+        self.my_width = my_width
 
         self.epsilon_scale = 1e-5
         self.correlation = 0.3
-        self.std_x = 5
-        self.std_y = 5
 
-        self.cov = torch.zeros(2, 2)
-        self.cov[0, 0] = self.std_x ** 2
-        self.cov[0, 1] = self.correlation * self.std_x * self.std_y
-        self.cov[1, 0] = self.cov[0, 1]
-        self.cov[1, 1] = self.std_y ** 2
+    def forward(self, keypoints, std):
+        std_x = std  # lower bound = 0.05
+        std_y = std
 
-    def forward(self, keypoints, my_height, my_width):
+        cov = torch.zeros(2, 2)
+        cov[0, 0] = std_x ** 2
+        cov[0, 1] = self.correlation * std_x * std_y
+        cov[1, 0] = cov[0, 1]
+        cov[1, 1] = std_y ** 2
 
         cur_batch = keypoints.shape[0]
         num_of_kp = keypoints.shape[1]
-        #ReconScoreMap = torch.zeros(cur_batch, num_of_kp, my_height, my_width).cuda()
 
         MyMean = keypoints
-        MyCov = self.cov
-        #MyDistribution = torch.distributions.multivariate_normal.MultivariateNormal(MyMean, MyCov)
-        #tmp = MyDistribution.sample()
 
-        x_indices = torch.arange(0, my_width).repeat(cur_batch, num_of_kp, my_height, 1).cuda()
-        y_indices = torch.arange(0, my_height).repeat(cur_batch, num_of_kp, my_width, 1).permute(0, 1, 3, 2).cuda()
+        x_indices = torch.arange(0, self.my_width).repeat(cur_batch, num_of_kp, self.my_height, 1).cuda()
+        y_indices = torch.arange(0, self.my_height).repeat(cur_batch, num_of_kp, self.my_width, 1).permute(0, 1, 3, 2).cuda()
 
         x_all = x_indices.flatten(2).unsqueeze(3)
         y_all = y_indices.flatten(2).unsqueeze(3)
@@ -686,11 +684,11 @@ class ReconWithKP(nn.Module):
         e1 = xx - mu_x #(b, 200, 7680)
         e2 = yy - mu_y
 
-        denum = (1/(2 * 3.14 * self.std_x * self.std_y * math.sqrt(1 - self.correlation * self.correlation)))
+        denum = (1/(2 * 3.14 * std_x * std_y * math.sqrt(1 - self.correlation * self.correlation)))
         tmp1 = -0.5 * (1 / (1 - self.correlation * self.correlation))
-        tmp2 = torch.pow((e1 / self.std_x), 2) - (2*self.correlation * (e1 / self.std_x) * (e2 / self.std_y)) + torch.pow((e2 / self.std_y), 2)
+        tmp2 = torch.pow((e1 / std_x), 2) - (2*self.correlation * (e1 / std_x) * (e2 / std_y)) + torch.pow((e2 / std_y), 2)
         ReconKPMap = denum * torch.exp(tmp1 * tmp2)
-        ReconKPMap = ReconKPMap.view(cur_batch, num_of_kp, my_height, my_width)
+        ReconKPMap = ReconKPMap.view(cur_batch, num_of_kp, self.my_height, self.my_width)
 
         return ReconKPMap
 

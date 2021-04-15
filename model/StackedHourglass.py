@@ -137,7 +137,8 @@ class StackedHourglassImgRecon_DETR(nn.Module):
         super(StackedHourglassImgRecon_DETR, self).__init__()
         self.nstack = nstack
         self.pre = nn.Sequential(
-            Conv(2 * num_of_kp, 128, 3, 1, bn=True, relu=True),
+            #Conv(2 * num_of_kp, 128, 3, 1, bn=True, relu=True),
+            Conv(2 * 5 * num_of_kp, 128, 3, 1, bn=True, relu=True),
             #Conv(456, 128, 3, 1, bn=True, relu=True),
             #Conv(200, 128, 3, 1, bn=True, relu=True),
             Residual(128, 128),
