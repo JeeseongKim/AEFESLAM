@@ -7,6 +7,9 @@ from torch import nn, Tensor
 from position_encoding import *
 from model.layers import weights_init
 
+from model.AEFE_Transformer import *
+from utils import *
+
 class PositionEmbeddingSine(nn.Module):
     """
     This is a more standard version of the position embedding, very similar to the one
@@ -85,29 +88,42 @@ class ENCinp_1(nn.Module):
         super(ENCinp_1, self).__init__()
 
         # Resnet50 backbone
-        self.backbone = resnet50(pretrained=False)
-        del self.backbone.fc
+        #self.backbone = resnet50(pretrained=False)
+        #del self.backbone.fc
+        #self.conv1 = nn.Conv2d(my_height*my_width, dim1, 1)
+        #self.conv2 = nn.Conv2d(dim1, dim2, 1)
+        #self.conv3 = nn.Conv2d(dim2, dim2, 1)
 
-        self.conv1 = nn.Conv2d(my_height*my_width, dim1, 1)
-        self.conv2 = nn.Conv2d(dim1, dim2, 1)
-        self.conv3 = nn.Conv2d(dim2, dim2, 1)
+        self.linear1 = torch.nn.Linear(my_height*my_width, dim1)
+        self.linear2 = torch.nn.Linear(dim1, dim2)
+        self.linear3 = torch.nn.Linear(dim2, dim2)
 
+    #def forward(self, inputs, pos):
     def forward(self, inputs):
-        self.conv1.apply(weights_init)
-        self.conv2.apply(weights_init)
-        self.conv3.apply(weights_init)
+        self.linear1.apply(weights_init)
+        self.linear1.apply(weights_init)
+        self.linear1.apply(weights_init)
 
         # x = self.backbone.conv1(inputs)
         inputs = inputs.flatten(2) #inputs = Rk + posRk (b,k,7680)
-        inputs = inputs.permute(0, 2, 1)
-        inputs = inputs.unsqueeze(3)
+        #inputs = inputs.permute(0, 2, 1)
+        #inputs = inputs.unsqueeze(3)
 
-        x = self.conv1(inputs)
-        x = self.conv3(x)
+        x = self.linear1(inputs)
+        x = self.linear2(x)
+        x = self.linear3(x)
+        #out = F.relu(self.conv3(x))
+        out = x
 
-        out = F.relu(self.conv3(x))
+        #input_pos = pos.flatten(2)
+        #xx = self.linear1(input_pos)
+        #xx = self.linear2(xx)
+        #xx = self.linear3(xx)
+        #pos_out = xx
 
-        return out.squeeze(3)
+        #return out.squeeze(3)
+        #return out, pos_out
+        return inputs, out
 
 
 class ENCinp(nn.Module):
@@ -244,16 +260,92 @@ class DETR_1E2D(nn.Module):
         super(DETR_1E2D, self).__init__()
 
         #Transformer
-        self.transformer_kp = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
-        self.transformer_f = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+        #self.transformer_kp = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+        #self.transformer_f = nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+        self.transformer = Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
 
         #output positional encodings (object queries)
         self.query_pos_kp = nn.Embedding(num_voters, hidden_dim)
         self.query_pos_f = nn.Embedding(num_voters, hidden_dim)
+        #self.query_pos = nn.Embedding(num_voters, hidden_dim)
 
         self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
         self.linear_class_f = MLP(hidden_dim, hidden_dim, 256, 3)
 
+        self.STE = StraightThroughEstimator()
+        #self.linear = torch.nn.Linear(2, 2)
+
+    def forward(self, encoder_input, my_height, my_width):
+
+
+        '''
+        src = sequence to the encoder (S, N, E)
+        tgt = sequence to the decoder (T, N, E)
+        output = (T, N, E)
+        S: source sequence length (hw)
+        T: target sequence length (num_voter)
+        N: batch size
+        E: feature number (hidden_dim)
+        '''
+        #self.transformer.apply(weights_init)
+        self.linear_class_kp.apply(weights_init)
+        self.linear_class_f.apply(weights_init)
+
+        cur_batch = encoder_input.shape[0]
+
+        #trg_tmp = self.query_pos.weight
+        #trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
+
+        trg_tmp_kp = self.query_pos_kp.weight
+        trg_kp = trg_tmp_kp.unsqueeze(1).repeat(1, cur_batch, 1)
+        trg_tmp_f = self.query_pos_f.weight
+        trg_f = trg_tmp_f.unsqueeze(1).repeat(1, cur_batch, 1)
+
+        input = encoder_input.permute(1, 0, 2)
+
+        #enc_ouput, h_kp, h_f = self.transformer(src=input, tgt1=trg, tgt2=trg)
+        enc_ouput, h_kp, h_f = self.transformer(src=input, tgt1=trg_kp, tgt2=trg_f)
+
+        hh_kp = self.linear_class_kp(h_kp)
+        hh_f = self.linear_class_f(h_f)
+
+        myKP = hh_kp.permute(1, 0, 2)
+        myDesc = hh_f.permute(1, 0, 2)
+
+        #initial_param = torch.tensor([5, 5]).float()
+        #my_param = torch.abs(self.linear(initial_param.cuda()))
+        desc = torch.bernoulli(1 / (1 + torch.exp(-3 * myDesc)))
+        desc = self.STE(desc)
+        #desc = 1 / (1 + torch.exp(-10 * myDesc))
+        #desc = torch.sigmoid(myDesc)
+
+        #kp = 1 / (1 + torch.exp(-10 * myKP))
+        kp = 1 / (1 + torch.exp(-3 * myKP))
+        #kp = torch.sigmoid(myKP)
+        kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+        kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+
+        #kp = kp.permute(1, 0, 2)
+        #desc = desc.permute(1, 0, 2)
+
+        return kp, desc
+
+class DETR_1E1D(nn.Module):
+    def __init__(self, num_voters, hidden_dim=256, nheads=1, num_encoder_layers=2, num_decoder_layers=2):
+        super(DETR_1E1D, self).__init__()
+
+        #Transformer
+        self.transformer = Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
+
+        #output positional encodings (object queries)
+        self.query_pos = nn.Embedding(num_voters, hidden_dim)
+
+        self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 1)
+        #self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
+        #self.linear_class_f = MLP(hidden_dim, hidden_dim, 256, 3)
+
+        #self.STE = StraightThroughEstimator()
+        #self.linear = torch.nn.Linear(2, 2)
 
     def forward(self, encoder_input, my_height, my_width):
 
@@ -267,32 +359,51 @@ class DETR_1E2D(nn.Module):
         E: feature number (hidden_dim)
         '''
 
+        #self.transformer.apply(weights_init)
+        self.linear_class_kp.apply(weights_init)
+        #self.linear_class_f.apply(weights_init)
+
         cur_batch = encoder_input.shape[0]
 
-        trg_tmp_kp = self.query_pos_kp.weight
-        trg_kp = trg_tmp_kp.unsqueeze(1).repeat(1, cur_batch, 1)
+        trg_tmp = self.query_pos.weight
+        trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
 
-        trg_tmp_f = self.query_pos_f.weight
-        trg_f = trg_tmp_f.unsqueeze(1).repeat(1, cur_batch, 1)
+        #trg_tmp_kp = self.query_pos_kp.weight
+        #trg_kp = trg_tmp_kp.unsqueeze(1).repeat(1, cur_batch, 1)
+        #trg_tmp_f = self.query_pos_f.weight
+        #trg_f = trg_tmp_f.unsqueeze(1).repeat(1, cur_batch, 1)
 
         input = encoder_input.permute(2, 0, 1)
 
-        h_kp = self.transformer_kp(input, trg_kp)
-        h_f = self.transformer_f(input, trg_f)
+        #enc_ouput, h_kp, h_f = self.transformer(src=input, tgt1=trg, tgt2=trg)
+        #enc_ouput, h_kp, h_f = self.transformer(src=input, tgt1=trg_kp, tgt2=trg_f)
+        enc_ouput, h_kp = self.transformer(src=input, tgt1=trg)
 
         hh_kp = self.linear_class_kp(h_kp)
-        hh_f = self.linear_class_f(h_f)
+        #hh_f = self.linear_class_f(h_f)
 
-        desc = 1 / (1 + torch.exp(-1 * hh_f))
+        myKP = hh_kp.permute(1, 0, 2)
+        #myDesc = hh_f.permute(1, 0, 2)
 
-        kp = 1 / (1 + torch.exp(-10 * hh_kp))
+        #initial_param = torch.tensor([5, 5]).float()
+        #my_param = torch.abs(self.linear(initial_param.cuda()))
+        #desc = torch.bernoulli(1 / (1 + torch.exp(-3 * myDesc)))
+        #desc = self.STE(desc)
+        #desc = 1 / (1 + torch.exp(-10 * myDesc))
+        #desc = torch.sigmoid(myDesc)
+
+        #kp = 1 / (1 + torch.exp(-10 * myKP))
+        #kp = 1 / (1 + torch.exp(-3 * myKP))
+        kp = 1 / (1 + torch.exp(-1 * myKP))
+        #kp = torch.sigmoid(myKP)
         kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
         kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
 
-        kp = kp.permute(1, 0, 2)
-        desc = desc.permute(1, 0, 2)
+        #kp = kp.permute(1, 0, 2)
+        #desc = desc.permute(1, 0, 2)
 
-        return kp, desc
+        #return kp, desc
+        return kp
 
 class DETR4f(nn.Module):
     def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
@@ -522,6 +633,7 @@ class DETR_origin(nn.Module):
 
         return attention_map, h, outputs_kp
 
+'''
 class Transformer(nn.Module):
 
     def __init__(self, d_model=256, nhead=8, num_encoder_layers=6,
@@ -530,42 +642,55 @@ class Transformer(nn.Module):
                  return_intermediate_dec=False):
         super().__init__()
 
-        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
-                                                dropout, activation, normalize_before)
+        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
 
-        decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
-                                                dropout, activation, normalize_before)
-        decoder_norm = nn.LayerNorm(d_model)
-        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
-                                          return_intermediate=return_intermediate_dec)
+        decoder_layer_1 = TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
+        decoder_layer_2 = TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
+        decoder_norm_1 = nn.LayerNorm(d_model)
+        decoder_norm_2 = nn.LayerNorm(d_model)
+
+        self.decoder_1 = TransformerDecoder(decoder_layer_1, num_decoder_layers, decoder_norm_1, return_intermediate=return_intermediate_dec)
+        self.decoder_2 = TransformerDecoder(decoder_layer_2, num_decoder_layers, decoder_norm_2, return_intermediate=return_intermediate_dec)
 
         self._reset_parameters()
 
         self.d_model = d_model
         self.nhead = nhead
+    '''
 
+'''
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed):
+    def forward(self, src, query_embed_1, query_embed_2):
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(2, 0, 1)
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
-        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        mask = mask.flatten(1)
+        #bs = src.shape[1]
+        query_embed_1 = query_embed_1.unsqueeze(1).repeat(1, bs, 1)
+        query_embed_2 = query_embed_2.unsqueeze(1).repeat(1, bs, 1)
+        #query_embed_1 = query_embed_1
+        #query_embed_2 = query_embed_2
 
-        tgt = torch.zeros_like(query_embed)
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
-                          pos=pos_embed, query_pos=query_embed)
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        #mask = mask.flatten(1)
 
+        tgt_1 = torch.zeros_like(query_embed_1)
+        tgt_2 = torch.zeros_like(query_embed_2)
 
+        memory_1 = self.encoder(src)
+        memory_2 = self.encoder(src)
+
+        hs_1 = self.decoder_1(tgt_1, memory_1)
+        hs_2 = self.decoder_2(tgt_2, memory_2)
+
+        return hs_1.transpose(1, 2), memory_1.permute(1, 2, 0).view(bs, c, h, w),  hs_2.transpose(1, 2), memory_2.permute(1, 2, 0).view(bs, c, h, w)
+'''
+
+'''
 class TransformerEncoder(nn.Module):
 
     def __init__(self, encoder_layer, num_layers, norm=None):
@@ -815,6 +940,7 @@ class simple_rsz(nn.Module):
         x = self.linear(inputs)
 
         return x
+'''
 
 class MakeDesc(nn.Module):
     def __init__(self, inp_channel, oup_channel):

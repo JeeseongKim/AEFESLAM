@@ -9,21 +9,29 @@ class StackedHourglassForKP(nn.Module):
 
         self.nstack = nstack
 
+        self.pre1 = Conv(3, 64, 7, 2, bn=True, relu=True)
+
+        self.pre2 = Residual(64, 128)
+        #self.pre3 = Pool(2, 2)
+        #self.pre4 = Residual(128, 128)
+        self.pre5 = Residual(128, inp_dim)
+        self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
+
+        '''
         self.pre = nn.Sequential(
             Conv(3, 64, 3, 1, bn=True, relu=True),
-            #Conv(3, 8, 3, 1, bn=True, relu=True),
-            #Conv(8, 16, 3, 1, bn=True, relu=True),
-            #Conv(16, 32, 3, 1, bn=True, relu=True),
-            #Conv(32, 64, 3, 1, bn=True, relu=True),
+            #Conv(3, 64, 7, 2, bn=True, relu=True),
             Residual(64, 128),
-            ##Pool(2, 2),
+            #Pool(2, 2),
             Residual(128, 128),
             Residual(128, inp_dim)
         )
+        '''
 
         self.hgs = nn.ModuleList([
             nn.Sequential(
-                Hourglass(4, inp_dim, bn, increase),
+                #Hourglass(4, inp_dim, bn, increase),
+                Hourglass(1, inp_dim, bn, increase),
             ) for i in range(nstack)])
 
         self.features = nn.ModuleList([
@@ -48,7 +56,16 @@ class StackedHourglassForKP(nn.Module):
 
     def forward(self, imgs):
         x = imgs #(b,3,w,h)
-        x = self.pre(x) #(b,192,96,128) #(b, 192, 57, 192)
+
+        x = self.pre1(x)
+        #x = self.upsample(x)
+        x = self.pre2(x)
+        #x = self.pre3(x)
+        #x = self.pre4(x)
+        x = self.pre5(x)
+        x = self.upsample(x)
+
+        #x = self.pre(x) #(b,192,96,128) #(b, 192, 57, 192)
         combined_hm_preds = []
         append = combined_hm_preds.append
         for i in range(self.nstack):
@@ -71,14 +88,15 @@ class StackedHourglassImgRecon(nn.Module):
             #Conv(256, 256, 3, 1, bn=True, relu=True),
             #Conv(256, 128, 3, 1, bn=True, relu=True),
             #Conv(128, 128, 3, 1, bn=True, relu=True),
-            Residual(128, 128),
+            #Residual(128, 128),
             Residual(128, inp_dim), #inp_dim = 208 (img width)
             Residual(inp_dim, inp_dim)
         )
 
         self.hgs = nn.ModuleList([
             nn.Sequential(
-                Hourglass(4, inp_dim, bn, increase),
+                #Hourglass(4, inp_dim, bn, increase),
+                Hourglass(2, inp_dim, bn, increase),
             ) for i in range(nstack)])
 
         self.features = nn.ModuleList([
@@ -136,6 +154,16 @@ class StackedHourglassImgRecon_DETR(nn.Module):
     def __init__(self, num_of_kp, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):
         super(StackedHourglassImgRecon_DETR, self).__init__()
         self.nstack = nstack
+
+        #self.pre1 = Conv(2 * 5 * num_of_kp, 64, 7, 2, bn=True, relu=True)
+        #self.pre1 = Conv(256, 64, 7, 2, bn=True, relu=True)
+        self.pre1 = Conv(128, 64, 7, 2, bn=True, relu=True)
+        self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
+        self.pre2 = Residual(64, 128)
+        #self.pre3 = Residual(128, 128)
+        self.pre4 = Residual(128, inp_dim)
+
+        '''
         self.pre = nn.Sequential(
             #Conv(2 * num_of_kp, 128, 3, 1, bn=True, relu=True),
             Conv(2 * 5 * num_of_kp, 128, 3, 1, bn=True, relu=True),
@@ -145,18 +173,19 @@ class StackedHourglassImgRecon_DETR(nn.Module):
             Residual(128, inp_dim), #inp_dim = 208 (img width)
             Residual(inp_dim, inp_dim)
         )
-
+        '''
         self.hgs = nn.ModuleList([
             nn.Sequential(
-                Hourglass(4, inp_dim, bn, increase),
+                #Hourglass(4, inp_dim, bn, increase),
+                Hourglass(1, inp_dim, bn, increase),
             ) for i in range(nstack)])
 
         self.features = nn.ModuleList([
             nn.Sequential(
-                Residual(inp_dim, inp_dim),
+                #Residual(inp_dim, inp_dim),
                 Conv(inp_dim, inp_dim, 1, bn=True, relu=True)
             ) for i in range(nstack)])
-
+        '''
         self.outs = nn.ModuleList([
             nn.Sequential(
                 #Conv(inp_dim, oup_dim, 1, relu=False, bn=False), #(256 -> 3)
@@ -176,6 +205,13 @@ class StackedHourglassImgRecon_DETR(nn.Module):
                 #nn.BatchNorm2d(3)
         ) for i in range(nstack)
         ])
+        '''
+        self.outs = nn.ModuleList([
+            nn.Sequential(
+                Conv(inp_dim, oup_dim, 1, relu=False, bn=False), #256 -> 200
+            )for i in range(nstack)
+         ])
+
 
         self.merge_features = nn.ModuleList([
             Merge(inp_dim, inp_dim) for i in range(nstack - 1)
@@ -187,7 +223,15 @@ class StackedHourglassImgRecon_DETR(nn.Module):
 
     def forward(self, concat_recon):
         x = concat_recon
-        x = self.pre(x) #(b,160,16,16)
+
+        x = self.pre1(x)
+        #x = self.upsample(x)
+        x = self.pre2(x)
+        #x = self.pre3(x)
+        x = self.pre4(x)
+        x = self.upsample(x)
+
+        #x = self.pre(x) #(b,160,16,16)
         combined_hm_preds = []
         append = combined_hm_preds.append
         for i in range(self.nstack):

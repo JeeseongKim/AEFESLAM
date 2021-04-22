@@ -7,7 +7,8 @@ def weights_init(m):
     if classname.find('nn.Conv2d') != -1:
         torch.nn.init.kaiming_normal_(m.weight)
     elif classname.find('nn.Linear') != -1:
-        torch.nn.init.xavier_normal_(m.weight)
+       torch.nn.init.xavier_normal_(m.weight)
+    #torch.nn.init.xavier_normal_(m.weight)
 
 
 Pool = nn.MaxPool2d
