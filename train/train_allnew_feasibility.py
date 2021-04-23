@@ -1,6 +1,6 @@
 ##Train DETR4 has 1 encoder for keypoints and descriptors, and 2 different decoders which shares target(=voters)
 
-from model.StackedHourglass import *
+from model.StackedHourglass_feasibility import *
 from loss import *
 from utils import *
 from GenDescriptorMap import *

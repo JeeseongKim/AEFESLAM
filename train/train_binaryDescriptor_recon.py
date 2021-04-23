@@ -27,8 +27,8 @@ vis = visdom.Visdom()
 plot_all = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='All Loss'))
 plot_sep = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Separation Loss'))
 
-plot_trans_kp = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation loss (KP)'))
-plot_trans_desc = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation loss (Desc)'))
+#plot_trans_kp = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation loss (KP)'))
+#plot_trans_desc = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation loss (Desc)'))
 
 plot_recon_L2 = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Reconstruction L2 Loss'))
 plot_recon_L1 = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Reconstruction L1 Loss'))
@@ -93,8 +93,12 @@ def train():
     #if os.path.exists("/home/jsk/AEFE_SLAM/SaveModelCKPT/210421_test.pth"):
         # if os.path.exists("./SaveModelCKPT/210401.pth"):
         print("-----Loading Checkpoint-----")
+
         checkpoint = torch.load("/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model.pth")
         #checkpoint = torch.load("/home/jsk/AEFE_SLAM/SaveModelCKPT/210421_test.pth")
+
+        epoch = checkpoint['epoch']
+        loss = checkpoint['loss']
 
         model_StackedHourglassForKP.module.load_state_dict(checkpoint['model_StackedHourglassForKP'])
         model_DETR_kp.module.load_state_dict(checkpoint['model_DETR_kp'])
@@ -131,19 +135,19 @@ def train():
             input_img, cur_filename, kp_img = data
             aefe_input = input_img.cuda()  # (b, 3, height, width)
 
-            theta = random.uniform(-5, 5)
-            my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
-            tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
+            #theta = random.uniform(-5, 5)
+            #my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
+            #tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
 
             ##########################################ENCODER##########################################
             Rk = model_StackedHourglassForKP(aefe_input)[:, num_nstack - 1, :, :, :]
-            tf_Rk = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack - 1, :, :, :]
+            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack - 1, :, :, :]
 
             Rk_flatten = Rk.flatten(2)
-            tf_Rk_flatten = tf_Rk.flatten(2)
+            #tf_Rk_flatten = tf_Rk.flatten(2)
 
             kp = model_DETR_kp(Rk_flatten, my_height, my_width)
-            tf_kp = model_DETR_kp(tf_Rk_flatten, my_height, my_width)
+            #tf_kp = model_DETR_kp(tf_Rk_flatten, my_height, my_width)
 
             ##########################################DECODER##########################################
             fn_ReconKp = ReconWithKP(my_height, my_width)
@@ -162,11 +166,15 @@ def train():
             #n_recon_kp_4 = recon_kp_4.unsqueeze(1)
             #n_recon_kp_5 = recon_kp_5.unsqueeze(1)
 
-            n_Rk = Rk.unsqueeze(2)
+            STE = StraightThroughEstimator()
+            desc = torch.bernoulli(1 / (1 + torch.exp(-1 * Rk)))
+            desc = STE(desc).unsqueeze(2)
+            #n_Rk = Rk.unsqueeze(2)
 
             #RECON_1 = n_recon_kp_1 * n_Rk
             #RECON_2 = n_recon_kp_2 * n_Rk
-            RECON_3 = n_recon_kp_3 * n_Rk
+            #RECON_3 = n_recon_kp_3 * n_Rk
+            RECON_3 = n_recon_kp_3 * desc
             m_RECON_3 = torch.mean(RECON_3, dim=2)
             #RECON_4 = n_recon_kp_4 * n_Rk
             #RECON_5 = n_recon_kp_5 * n_Rk
@@ -237,6 +245,8 @@ def train():
 
         # if (epoch != 0) and ((epoch+1) % 5 == 0):
         torch.save({
+            'epoch': epoch,
+
             'model_StackedHourglassForKP': model_StackedHourglassForKP.module.state_dict(),
             'model_DETR_kp': model_DETR_kp.module.state_dict(),
             'model_StackedHourglassImgRecon': model_StackedHourglassImgRecon.module.state_dict(),
@@ -248,6 +258,8 @@ def train():
             'lr_scheduler_optimizer1': lr_scheduler_optimizer1.state_dict(),
             'lr_scheduler_optimizer2': lr_scheduler_optimizer2.state_dict(),
             'lr_scheduler_optimizer3': lr_scheduler_optimizer3.state_dict(),
+
+            'loss': loss,
 
         }, "/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model.pth")
         

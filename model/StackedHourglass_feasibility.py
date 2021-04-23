@@ -157,11 +157,11 @@ class StackedHourglassImgRecon_DETR(nn.Module):
 
         #self.pre1 = Conv(2 * 5 * num_of_kp, 64, 7, 2, bn=True, relu=True)
         #self.pre1 = Conv(256, 64, 7, 2, bn=True, relu=True)
+
         self.pre1 = Conv(128, 64, 7, 2, bn=True, relu=True)
-        self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
         self.pre2 = Residual(64, 128)
-        #self.pre3 = Residual(128, 128)
         self.pre4 = Residual(128, inp_dim)
+        self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
 
         '''
         self.pre = nn.Sequential(
@@ -185,27 +185,7 @@ class StackedHourglassImgRecon_DETR(nn.Module):
                 #Residual(inp_dim, inp_dim),
                 Conv(inp_dim, inp_dim, 1, bn=True, relu=True)
             ) for i in range(nstack)])
-        '''
-        self.outs = nn.ModuleList([
-            nn.Sequential(
-                #Conv(inp_dim, oup_dim, 1, relu=False, bn=False), #(256 -> 3)
-                Conv(inp_dim, 128, 1, relu=False, bn=False),
-                ##nn.BatchNorm2d(128),
-                #Conv(128, 128, 1, relu=False, bn=False),
-                Conv(128, 64, 1, relu=False, bn=False),
-                #Conv(64, 64, 1, relu=False, bn=False),
-                #Conv(64, 32, 1, relu=False, bn=False),
-                #Conv(32, 32, 1, relu=False, bn=False),
-                #Conv(32, 16, 1, relu=False, bn=False),
-                #Conv(16, 16, 1, relu=False, bn=False),
-                #Conv(16, 8, 1, relu=True, bn=False),
-                #Conv(8, 8, 1, relu=False, bn=False),
-                #Conv(8, 3, 1, relu=True, bn=False)
-                Conv(64, 3, 1, relu=True, bn=False)
-                #nn.BatchNorm2d(3)
-        ) for i in range(nstack)
-        ])
-        '''
+
         self.outs = nn.ModuleList([
             nn.Sequential(
                 Conv(inp_dim, oup_dim, 1, relu=False, bn=False), #256 -> 200
@@ -225,9 +205,7 @@ class StackedHourglassImgRecon_DETR(nn.Module):
         x = concat_recon
 
         x = self.pre1(x)
-        #x = self.upsample(x)
         x = self.pre2(x)
-        #x = self.pre3(x)
         x = self.pre4(x)
         x = self.upsample(x)
 
