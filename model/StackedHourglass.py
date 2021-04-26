@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from model.layers import Conv, Residual, Hourglass, Merge, Pool, upsample_recon
 from model.Heatmap import HeatmapLoss
+from model.layers import weights_init
 
 from torchvision.models import resnet50
 
@@ -59,6 +60,7 @@ class StackedHourglassForKP(nn.Module):
         self.backbone = resnet50()
         del self.backbone.fc
         self.conv = nn.Conv2d(2048, 256, 1)
+        self.conv.apply(weights_init)
 
     def forward(self, imgs):
         x = imgs #(b,3,w,h)

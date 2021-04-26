@@ -27,8 +27,10 @@ vis = visdom.Visdom()
 plot_all = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='All Loss'))
 plot_sep = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Separation Loss'))
 
-# plot_trans_kp = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation loss (KP)'))
-# plot_trans_desc = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Transformation loss (Desc)'))
+plot_kp_matching = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Matching loss (KP)'))
+plot_desc_matching = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Matching loss (Desc)'))
+
+plot_cosim = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Cosim Loss'))
 
 plot_recon_L2 = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Reconstruction L2 Loss'))
 plot_recon_L1 = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Reconstruction L1 Loss'))
@@ -50,12 +52,12 @@ my_height = 48  # 80 #32 #80 #64
 input_width = my_width
 
 num_epochs = 300
-batch_size = 2  # 8 #4
+batch_size = 4  # 8 #4
 
 stacked_hourglass_inpdim_kp = input_width
 # stacked_hourglass_oupdim_kp = num_of_kp  # number of my keypoints
 
-num_nstack = 4
+num_nstack = 2
 
 learning_rate = 1e-4  # 1e-3#1e-4 #1e-3
 weight_decay = 1e-5  # 1e-2#1e-5 #1e-5 #5e-4
@@ -63,7 +65,6 @@ lr_drop = 200
 ###########################################################################################
 concat_recon = []
 dtype = torch.FloatTensor
-
 
 ######################################################################################################################################################################################
 def train():
@@ -128,6 +129,9 @@ def train():
 
         running_sep_loss = 0
 
+        running_kp_match_loss = 0
+        running_desc_match_loss = 0
+
         running_cosim_loss = 0
 
         running_recon_loss_l2 = 0
@@ -138,21 +142,19 @@ def train():
             input_img, cur_filename, kp_img = data
             aefe_input = input_img.cuda()  # (b, 3, height, width)
 
-            cur_batch = aefe_input.shape[0]
-
-            theta = random.uniform(-5, 5)
+            theta = random.uniform(-10, 10)
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
 
             ##########################################ENCODER##########################################
             Rk = model_StackedHourglassForKP(aefe_input)
-            tf_Rk = model_StackedHourglassForKP(tf_aefe_input)[:, num_nstack - 1, :, :, :]
+            tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
 
             Rk_flatten = Rk.flatten(2)
             tf_Rk_flatten = tf_Rk.flatten(2)
 
-            kp = model_DETR_kp(Rk_flatten, my_height, my_width)
-            tf_kp = model_DETR_kp(tf_Rk_flatten, my_height, my_width)
+            kp = model_DETR_kp(Rk_flatten)
+            tf_kp = model_DETR_kp(tf_Rk_flatten)
 
             ##########################################DECODER##########################################
             #fn_ReconKp = ReconWithKP(my_height, my_width)
@@ -169,14 +171,17 @@ def train():
             n_tf_Rk = tf_Rk.unsqueeze(1)
             tf_desc = F.relu(tilde_tf_kp * n_tf_Rk).sum(dim=[3, 4])
 
-            my_feature = torch.cat([kp, desc], dim=2)
-            my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
-
             kp[:, :, 0] = kp[:, :, 0] * my_width
             kp[:, :, 1] = kp[:, :, 1] * my_height
 
             tf_kp[:, :, 0] = tf_kp[:, :, 0] * my_width
             tf_kp[:, :, 1] = tf_kp[:, :, 1] * my_height
+
+            kp = kp.int()
+            tf_kp = tf_kp.int()
+
+            my_feature = torch.cat([kp, desc], dim=2)
+            my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
 
             reconInput = (F.relu(tilde_kp * n_Rk)).mean(dim=1)
             tf_reconInput = (F.relu(tilde_tf_kp * n_tf_Rk)).mean(dim=1)
@@ -201,8 +206,11 @@ def train():
 
             # Encoder Loss
             # feature matching loss
-            fn_matching_loss = loss_matching(theta, my_feature, my_tf_feature, cur_batch, num_of_kp, my_width, my_height)
-            cur_transf_loss, cur_matching_loss = fn_matching_loss()
+            fn_hungarian_matcher = HungarianMatcher()
+            match, cal_tf_kp = fn_hungarian_matcher(theta, my_feature, my_tf_feature, my_width, my_height)
+
+            fn_matching_loss = matcher_criterion()
+            loss_kp_out, loss_desc_out = fn_matching_loss(match, tf_kp, cal_tf_kp, desc, tf_desc)
 
             # Reconstruction Loss
             criterion = SSIM()
@@ -210,21 +218,25 @@ def train():
             cur_recon_loss_l1 = F.l1_loss(reconImg, aefe_input) + F.l1_loss(tf_reconImg, tf_aefe_input)
             cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input)) + (1 - criterion(tf_reconImg, tf_aefe_input))
 
-            p_sep_loss = 1.0
+            p_sep_loss = 0.5
+            p_kp_loss = 0.01
+            p_desc_loss = 0.04
             p_cosim_loss = 1.0
             p_recon_img_l2 = 2.0
             p_recon_img_l1 = 2.0
-            p_recon_img_ssim = 1.0
+            p_recon_img_ssim = 0.5
 
             my_sep_loss = p_sep_loss * cur_sep_loss
+            my_kp_loss = p_kp_loss * loss_kp_out
+            my_desc_loss = p_desc_loss * loss_desc_out
             my_cosim_loss = p_cosim_loss * cur_cosim_loss
             my_recon_loss_l2 = p_recon_img_l2 * cur_recon_loss_l2
             my_recon_loss_l1 = p_recon_img_l1 * cur_recon_loss_l1
             my_recon_loss_ssim = p_recon_img_ssim * cur_recon_loss_ssim
 
-            loss = (my_sep_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
+            loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
 
-            print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", Cosim:", '%.4f' % my_cosim_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
+            print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", KP_matching:", '%.4f' % my_kp_loss.item(), ", Desc_matching:", '%.4f' % my_desc_loss.item(), ", Cosim:", '%.4f' % my_cosim_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
                   ", Recon_SSIM:", '%.4f' % my_recon_loss_ssim.item(), ", Recon_L1:", '%.4f' % my_recon_loss_l1.item())
 
             # ================Backward================
@@ -240,8 +252,9 @@ def train():
 
             running_loss = running_loss + loss.item()
             running_sep_loss = running_sep_loss + my_sep_loss.item()
+            running_kp_match_loss = running_kp_match_loss + my_kp_loss.item()
+            running_desc_match_loss = running_desc_match_loss + my_desc_loss.item()
             running_cosim_loss = running_cosim_loss + my_cosim_loss.item()
-
             running_recon_loss_l2 = running_recon_loss_l2 + my_recon_loss_l2.item()
             running_recon_loss_l1 = running_recon_loss_l1 + my_recon_loss_l1.item()
             running_recon_loss_ssim = running_recon_loss_ssim + my_recon_loss_ssim.item()
@@ -251,8 +264,8 @@ def train():
                 # print("epoch: ", epoch)
                 fn_save_kpimg = saveKPimg()
                 fn_save_kpimg(kp_img, kp, epoch + 1, cur_filename)
-                # fn_save_tfkpimg = savetfKPimg()
-                # fn_save_tfkpimg(tf_aefe_input, tf_kp, epoch + 1, cur_filename)
+                fn_save_tfkpimg = savetfKPimg()
+                fn_save_tfkpimg(tf_aefe_input, tf_kp, epoch + 1, cur_filename)
                 img_save_filename = ("/home/jsk/AEFE_SLAM/SaveReconstructedImg/%s_ep_%s.jpg" % (cur_filename, epoch + 1))
                 tf_img_save_filename = ("/home/jsk/AEFE_SLAM/SaveTFReconstructedImg/%s_ep_%s.jpg" % (cur_filename, epoch + 1))
                 save_image(reconImg, img_save_filename)
@@ -279,7 +292,14 @@ def train():
         }, "/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model.pth")
 
         vis.line(Y=[running_loss], X=np.array([epoch]), win=plot_all, update='append')
+
         vis.line(Y=[running_sep_loss], X=np.array([epoch]), win=plot_sep, update='append')
+
+        vis.line(Y=[running_kp_match_loss], X=np.array([epoch]), win=plot_kp_matching, update='append')
+        vis.line(Y=[running_desc_match_loss], X=np.array([epoch]), win=plot_desc_matching, update='append')
+
+        vis.line(Y=[running_cosim_loss], X=np.array([epoch]), win=plot_cosim, update='append')
+
         vis.line(Y=[running_recon_loss_l2], X=np.array([epoch]), win=plot_recon_L2, update='append')
         vis.line(Y=[running_recon_loss_l1], X=np.array([epoch]), win=plot_recon_L1, update='append')
         vis.line(Y=[running_recon_loss_ssim], X=np.array([epoch]), win=plot_recon_SSIM, update='append')
@@ -301,14 +321,15 @@ if __name__ == '__main__':
         os.makedirs("SavetfKPImg")
     if not os.path.exists("SaveReconstructedImg"):
         os.makedirs("SaveReconstructedImg")
+    if not os.path.exists("SaveTFReconstructedImg"):
+        os.makedirs("SaveTFReconstructedImg")
     if not os.path.exists("SaveHeatMapImg"):
         os.makedirs("SaveHeatMapImg")
     if not os.path.exists("SaveModelCKPT"):
         os.makedirs("SaveModelCKPT")
 
-    print("!!210425!!")
+    print("!!210426!!")
     print("!!!!!This is train_allnew.py!!!!!")
     train()
 
-# torch.save(model.state_dict(), './StackedHourGlass.pth')
 ##########################################################################################################################
