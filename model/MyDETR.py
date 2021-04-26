@@ -392,17 +392,10 @@ class DETR_1E1D(nn.Module):
         #desc = 1 / (1 + torch.exp(-10 * myDesc))
         #desc = torch.sigmoid(myDesc)
 
-        #kp = 1 / (1 + torch.exp(-10 * myKP))
-        #kp = 1 / (1 + torch.exp(-3 * myKP))
         kp = 1 / (1 + torch.exp(-1 * myKP))
-        #kp = torch.sigmoid(myKP)
-        kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
-        kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
+        #kp[:, :, 0] = torch.round(kp[:, :, 0] * my_width).float()
+        #kp[:, :, 1] = torch.round(kp[:, :, 1] * my_height).float()
 
-        #kp = kp.permute(1, 0, 2)
-        #desc = desc.permute(1, 0, 2)
-
-        #return kp, desc
         return kp
 
 class DETR4f(nn.Module):
