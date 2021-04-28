@@ -39,7 +39,7 @@ plot_recon_SSIM = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(t
 torch.multiprocessing.set_start_method('spawn', force=True)
 
 #########################################parameter#########################################
-num_of_kp = 200
+num_of_kp = 300
 voters = num_of_kp
 num_queries = voters
 
@@ -75,8 +75,7 @@ def train():
     model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
     optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    # model_DETR_kp = DETR_1E1D(num_voters=voters, hidden_dim=256, nheads=1, num_encoder_layers=2, num_decoder_layers=2).cuda()
-    model_DETR_kp = DETR_1E1D(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
+    model_DETR_kp = DETR_KPnDesc(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
     model_DETR_kp = nn.DataParallel(model_DETR_kp).cuda()
     optimizer_DETR_kp = torch.optim.AdamW(model_DETR_kp.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
@@ -153,23 +152,13 @@ def train():
             Rk_flatten = Rk.flatten(2)
             tf_Rk_flatten = tf_Rk.flatten(2)
 
-            kp = model_DETR_kp(Rk_flatten)
-            tf_kp = model_DETR_kp(tf_Rk_flatten)
+            kp, desc = model_DETR_kp(Rk_flatten)
+            tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten)
 
             ##########################################DECODER##########################################
-            #fn_ReconKp = ReconWithKP(my_height, my_width)
             fn_ReconKp = ReconWithKP(Rk.shape[2], Rk.shape[3])
             recon_kp = fn_ReconKp(kp, 1.0)  # (b,200,48,160)
             recon_tf_kp = fn_ReconKp(tf_kp, 1.0)  # (b,200,48,160)
-
-            # descriptor generation
-            tilde_kp = recon_kp.unsqueeze(2)
-            n_Rk = Rk.unsqueeze(1)
-            desc = F.relu(tilde_kp * n_Rk).sum(dim=[3, 4])
-
-            tilde_tf_kp = recon_tf_kp.unsqueeze(2)
-            n_tf_Rk = tf_Rk.unsqueeze(1)
-            tf_desc = F.relu(tilde_tf_kp * n_tf_Rk).sum(dim=[3, 4])
 
             kp[:, :, 0] = kp[:, :, 0] * my_width/Rk.shape[3]
             kp[:, :, 1] = kp[:, :, 1] * my_height/Rk.shape[2]
@@ -183,8 +172,8 @@ def train():
             my_feature = torch.cat([kp, desc], dim=2)
             my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
 
-            reconInput = (F.relu(tilde_kp * n_Rk)).mean(dim=1)
-            tf_reconInput = (F.relu(tilde_tf_kp * n_tf_Rk)).mean(dim=1)
+            reconInput = (recon_kp.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            tf_reconInput = (recon_tf_kp.unsqueeze(2) * tf_desc.unsqueeze(3).unsqueeze(4)).mean(1)
 
             reconImg = model_StackedHourglassImgRecon(reconInput)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
@@ -198,7 +187,7 @@ def train():
             # separation loss
             fn_loss_separation = loss_separation(kp).cuda()
             tf_fn_loss_separation = loss_separation(tf_kp).cuda()
-            cur_sep_loss = fn_loss_separation() + tf_fn_loss_separation()
+            cur_sep_loss = 5*fn_loss_separation() + 5*tf_fn_loss_separation()
 
             # similarity loss btw Dk and tf_Dk
             fn_loss_cosim = loss_cosim(Rk, tf_Rk).cuda()
@@ -219,8 +208,8 @@ def train():
             cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input)) + (1 - criterion(tf_reconImg, tf_aefe_input))
 
             p_sep_loss = 0.5
-            p_kp_loss = 1.0
-            p_desc_loss = 1.0
+            p_kp_loss = 0.3
+            p_desc_loss = 10.0
             p_cosim_loss = 1.0
             p_recon_img_l2 = 2.0
             p_recon_img_l1 = 2.0

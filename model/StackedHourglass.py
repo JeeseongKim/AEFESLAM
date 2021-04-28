@@ -21,6 +21,7 @@ class StackedHourglassForKP(nn.Module):
         
 
         '''
+        self.pool = Pool(2, 2)
         self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
         self.pre = nn.Sequential(
             #Conv(3, 64, 3, 1, bn=True, relu=True),
@@ -59,8 +60,9 @@ class StackedHourglassForKP(nn.Module):
 
         self.backbone = resnet50()
         del self.backbone.fc
-        self.conv = nn.Conv2d(2048, 256, 1)
-        self.conv.apply(weights_init)
+        #self.conv = nn.Conv2d(2048, 256, 1)
+        #self.conv = nn.Conv2d(64, 256, 1)
+        #self.conv.apply(weights_init)
 
     def forward(self, imgs):
         x = imgs #(b,3,w,h)
@@ -74,7 +76,8 @@ class StackedHourglassForKP(nn.Module):
         #x = self.upsample(x)
         '''
         x = self.pre(x) #(b,192,96,128) #(b, 192, 57, 192)
-        x = self.upsample(x)
+        #x = self.pool(x)
+        #x = self.upsample(x)
         combined_hm_preds = []
         append = combined_hm_preds.append
         for i in range(self.nstack):
@@ -86,7 +89,9 @@ class StackedHourglassForKP(nn.Module):
                 x = x + self.merge_preds[i](preds) + self.merge_features[i](feature)
 
         heatmap = torch.stack(combined_hm_preds, 1)[:, self.nstack - 1, :, :, :]
-
+        heatmap = self.pool(heatmap)
+        #out = self.conv(heatmap)
+        '''
         #out = self.backbone.conv1(heatmap)
         out = self.backbone.bn1(heatmap)
         out = self.backbone.relu(out)
@@ -98,8 +103,8 @@ class StackedHourglassForKP(nn.Module):
         out = self.backbone.layer4(out)
         out = self.upsample(out)
         out = self.conv(out)
-
-        return out
+        '''
+        return heatmap
 
 class StackedHourglassImgRecon(nn.Module):
     def __init__(self, num_of_kp, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):

@@ -657,6 +657,9 @@ class ReconWithKP(nn.Module):
         std_x = std  # lower bound = 0.05
         std_y = std
 
+        keypoints[:, :, 0] = keypoints[:, :, 0] * self.my_width
+        keypoints[:, :, 1] = keypoints[:, :, 1] * self.my_height
+
         cov = torch.zeros(2, 2)
         cov[0, 0] = std_x ** 2
         cov[0, 1] = self.correlation * std_x * std_y
