@@ -474,22 +474,26 @@ class DETR_KPnDesc(nn.Module):
         super(DETR_KPnDesc, self).__init__()
 
         #Transformer
-        self.transformer = Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers)
-
+        self.transformer = Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, return_intermediate_dec=True)
+        self.transformer.apply(weights_init)
+        #torch.nn.init.xavier_normal_(self.transformer.weight)
         #output positional encodings (object queries)
         self.query_pos = nn.Embedding(num_voters, hidden_dim)
-
-        #self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
-        self.linear_class_kp = torch.nn.Linear(256, 2)
+        torch.nn.init.xavier_normal_(self.query_pos.weight)
+        self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 4)
+        #torch.nn.init.xavier_normal_(self.linear_class_kp.weight)
+        #self.linear_class_kp = torch.nn.Linear(256, 2)
         self.linear_class_kp.apply(weights_init)
 
-        self.linear_class_desc = torch.nn.Linear(256, 256)
+        #self.linear_class_desc = torch.nn.Linear(256, 256)
+        self.linear_class_desc = MLP(hidden_dim, hidden_dim, 256, 3)
+        #torch.nn.init.xavier_normal_(self.linear_class_desc.weight)
         self.linear_class_desc.apply(weights_init)
 
         #self.STE = StraightThroughEstimator()
         #self.linear = torch.nn.Linear(2, 2)
 
-    def forward(self, encoder_input):
+    def forward(self, encoder_input, Rk):
 
         '''
         src = sequence to the encoder (S, N, E)
@@ -508,12 +512,19 @@ class DETR_KPnDesc(nn.Module):
 
         enc_ouput, h_kp = self.transformer(src=input, tgt1=trg)
 
-        hh_kp = self.linear_class_kp(h_kp)
-        myKP = hh_kp.permute(1, 0, 2)
-        kp = 1 / (1 + torch.exp(-1 * myKP))
+        hh_kp = h_kp[0].permute(1, 0, 2)
+        tmp_1 = hh_kp.unsqueeze(3).unsqueeze(4)
+        n_Rk = Rk.unsqueeze(1)
+        tmp_2 = (tmp_1 * n_Rk).view(Rk.shape[0], tmp_1.shape[1], tmp_1.shape[2], -1)
+        KPnDesc = tmp_2.mean(dim=3)
 
-        hh_desc = self.linear_class_desc(h_kp)
-        myDesc = hh_desc.permute(1, 0, 2)
+
+        myKP = self.linear_class_kp(KPnDesc)
+        kp = 1 / (1 + torch.exp(-3 * myKP))
+
+        #h_desc = h_kp.permute(1, 0, 2)
+
+        myDesc = self.linear_class_desc(KPnDesc)
         desc = 1 / (1 + torch.exp(-1 * myDesc))
 
         return kp, desc

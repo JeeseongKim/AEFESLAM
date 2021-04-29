@@ -148,69 +148,70 @@ def train():
 
             ##########################################ENCODER##########################################
             Rk = model_StackedHourglassForKP(aefe_input)
-            tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
+            #tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
 
             Rk_flatten = Rk.flatten(2)
-            tf_Rk_flatten = tf_Rk.flatten(2)
+            #tf_Rk_flatten = tf_Rk.flatten(2)
 
             kp = model_DETR_kp(Rk_flatten)
-            tf_kp = model_DETR_kp(tf_Rk_flatten)
+            #tf_kp = model_DETR_kp(tf_Rk_flatten)
 
             ##########################################DECODER##########################################
             #fn_ReconKp = ReconWithKP(my_height, my_width)
             fn_ReconKp = ReconWithKP(Rk.shape[2], Rk.shape[3])
             recon_kp = fn_ReconKp(kp, 1.0)  # (b,200,48,160)
-            recon_tf_kp = fn_ReconKp(tf_kp, 1.0)  # (b,200,48,160)
+            #recon_tf_kp = fn_ReconKp(tf_kp, 1.0)  # (b,200,48,160)
 
             # descriptor generation
             tilde_kp = recon_kp.unsqueeze(2)
             n_Rk = Rk.unsqueeze(1)
             desc = F.relu(tilde_kp * n_Rk).sum(dim=[3, 4])
 
-            tilde_tf_kp = recon_tf_kp.unsqueeze(2)
-            n_tf_Rk = tf_Rk.unsqueeze(1)
-            tf_desc = F.relu(tilde_tf_kp * n_tf_Rk).sum(dim=[3, 4])
+            #tilde_tf_kp = recon_tf_kp.unsqueeze(2)
+            #n_tf_Rk = tf_Rk.unsqueeze(1)
+            #tf_desc = F.relu(tilde_tf_kp * n_tf_Rk).sum(dim=[3, 4])
 
             kp[:, :, 0] = kp[:, :, 0] * my_width/Rk.shape[3]
             kp[:, :, 1] = kp[:, :, 1] * my_height/Rk.shape[2]
 
-            tf_kp[:, :, 0] = tf_kp[:, :, 0] * my_width/Rk.shape[3]
-            tf_kp[:, :, 1] = tf_kp[:, :, 1] * my_height/Rk.shape[2]
+            #tf_kp[:, :, 0] = tf_kp[:, :, 0] * my_width/Rk.shape[3]
+            #tf_kp[:, :, 1] = tf_kp[:, :, 1] * my_height/Rk.shape[2]
 
             kp = kp.int()
-            tf_kp = tf_kp.int()
+            #tf_kp = tf_kp.int()
 
             my_feature = torch.cat([kp, desc], dim=2)
-            my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
+            #my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
 
             reconInput = (F.relu(tilde_kp * n_Rk)).mean(dim=1)
-            tf_reconInput = (F.relu(tilde_tf_kp * n_tf_Rk)).mean(dim=1)
+            #tf_reconInput = (F.relu(tilde_tf_kp * n_tf_Rk)).mean(dim=1)
 
             reconImg = model_StackedHourglassImgRecon(reconInput)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
-            tf_reconImg = model_StackedHourglassImgRecon(tf_reconInput)
-            tf_reconImg = tf_reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
+            #tf_reconImg = model_StackedHourglassImgRecon(tf_reconInput)
+            #tf_reconImg = tf_reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
             ##############################################LOSS#############################################
             # Define Loss Functions!
 
             # separation loss
             fn_loss_separation = loss_separation(kp).cuda()
-            tf_fn_loss_separation = loss_separation(tf_kp).cuda()
-            cur_sep_loss = fn_loss_separation() + tf_fn_loss_separation()
+            #tf_fn_loss_separation = loss_separation(tf_kp).cuda()
+            #cur_sep_loss = fn_loss_separation() + tf_fn_loss_separation()
+            cur_sep_loss = fn_loss_separation()
 
             # similarity loss btw Dk and tf_Dk
-            fn_loss_cosim = loss_cosim(Rk, tf_Rk).cuda()
-            cur_cosim_loss = fn_loss_cosim()
+            #fn_loss_cosim = loss_cosim(Rk, tf_Rk).cuda()
+            #cur_cosim_loss = fn_loss_cosim()
 
             # Encoder Loss
             # feature matching loss
-            fn_hungarian_matcher = HungarianMatcher()
-            match, cal_tf_kp = fn_hungarian_matcher(theta, my_feature, my_tf_feature, my_width, my_height)
+            #fn_hungarian_matcher = HungarianMatcher()
+            #match, cal_tf_kp = fn_hungarian_matcher(theta, my_feature, my_tf_feature, my_width, my_height)
 
-            fn_matching_loss = matcher_criterion()
-            loss_kp_out, loss_desc_out = fn_matching_loss(match, tf_kp, cal_tf_kp, desc, tf_desc)
+            #fn_matching_loss = matcher_criterion()
+            #loss_kp_out, loss_desc_out = fn_matching_loss(match, tf_kp, cal_tf_kp, desc, tf_desc)
 
             # Reconstruction Loss
             criterion = SSIM()

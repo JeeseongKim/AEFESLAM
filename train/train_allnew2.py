@@ -79,7 +79,8 @@ def train():
     model_DETR_kp = nn.DataParallel(model_DETR_kp).cuda()
     optimizer_DETR_kp = torch.optim.AdamW(model_DETR_kp.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
-    model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=256, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
+    #model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=256, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
+    model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=1280, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
     model_StackedHourglassImgRecon = nn.DataParallel(model_StackedHourglassImgRecon).cuda()
     optimizer_ImgRecon = torch.optim.AdamW(model_StackedHourglassImgRecon.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
@@ -152,19 +153,26 @@ def train():
             Rk_flatten = Rk.flatten(2)
             tf_Rk_flatten = tf_Rk.flatten(2)
 
-            kp, desc = model_DETR_kp(Rk_flatten)
-            tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten)
-
+            kp, desc = model_DETR_kp(Rk_flatten, Rk)
+            tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten, tf_Rk)
+            desc = torch.bernoulli(desc)
+            MySTE = StraightThroughEstimator()
+            desc = MySTE(desc)
             ##########################################DECODER##########################################
             fn_ReconKp = ReconWithKP(Rk.shape[2], Rk.shape[3])
-            recon_kp = fn_ReconKp(kp, 1.0)  # (b,200,48,160)
-            recon_tf_kp = fn_ReconKp(tf_kp, 1.0)  # (b,200,48,160)
+            recon_kp_1 = fn_ReconKp(kp, 0.5)
+            recon_kp_2 = fn_ReconKp(kp, 1.0)
+            recon_kp_3 = fn_ReconKp(kp, 3.0)
+            recon_kp_4 = fn_ReconKp(kp, 5.0)
+            recon_kp_5 = fn_ReconKp(kp, 10.0)
 
-            kp[:, :, 0] = kp[:, :, 0] * my_width/Rk.shape[3]
-            kp[:, :, 1] = kp[:, :, 1] * my_height/Rk.shape[2]
+            #recon_tf_kp = fn_ReconKp(tf_kp, 1.0)  # (b,200,48,160)
 
-            tf_kp[:, :, 0] = tf_kp[:, :, 0] * my_width/Rk.shape[3]
-            tf_kp[:, :, 1] = tf_kp[:, :, 1] * my_height/Rk.shape[2]
+            kp[:, :, 0] = kp[:, :, 0] * my_width
+            kp[:, :, 1] = kp[:, :, 1] * my_height
+
+            tf_kp[:, :, 0] = tf_kp[:, :, 0] * my_width
+            tf_kp[:, :, 1] = tf_kp[:, :, 1] * my_height
 
             kp = kp.int()
             tf_kp = tf_kp.int()
@@ -172,14 +180,20 @@ def train():
             my_feature = torch.cat([kp, desc], dim=2)
             my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
 
-            reconInput = (recon_kp.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
-            tf_reconInput = (recon_tf_kp.unsqueeze(2) * tf_desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            #reconInput = (recon_kp.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_1 = (recon_kp_1.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_2 = (recon_kp_2.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_3 = (recon_kp_3.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_4 = (recon_kp_4.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_5 = (recon_kp_5.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            #tf_reconInput = (recon_tf_kp.unsqueeze(2) * tf_desc.unsqueeze(3).unsqueeze(4)).mean(1)
 
+            reconInput = torch.cat([reconInput_1, reconInput_2, reconInput_3, reconInput_4, reconInput_5], dim=1)
             reconImg = model_StackedHourglassImgRecon(reconInput)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
-            tf_reconImg = model_StackedHourglassImgRecon(tf_reconInput)
-            tf_reconImg = tf_reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
+            #tf_reconImg = model_StackedHourglassImgRecon(tf_reconInput)
+            #tf_reconImg = tf_reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
             ##############################################LOSS#############################################
             # Define Loss Functions!
@@ -187,7 +201,8 @@ def train():
             # separation loss
             fn_loss_separation = loss_separation(kp).cuda()
             tf_fn_loss_separation = loss_separation(tf_kp).cuda()
-            cur_sep_loss = 5*fn_loss_separation() + 5*tf_fn_loss_separation()
+            cur_sep_loss = fn_loss_separation() + tf_fn_loss_separation()
+            #cur_sep_loss = fn_loss_separation()
 
             # similarity loss btw Dk and tf_Dk
             fn_loss_cosim = loss_cosim(Rk, tf_Rk).cuda()
@@ -203,17 +218,20 @@ def train():
 
             # Reconstruction Loss
             criterion = SSIM()
-            cur_recon_loss_l2 = F.mse_loss(reconImg, aefe_input) + F.mse_loss(tf_reconImg, tf_aefe_input)
-            cur_recon_loss_l1 = F.l1_loss(reconImg, aefe_input) + F.l1_loss(tf_reconImg, tf_aefe_input)
-            cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input)) + (1 - criterion(tf_reconImg, tf_aefe_input))
+            #cur_recon_loss_l2 = F.mse_loss(reconImg, aefe_input) + F.mse_loss(tf_reconImg, tf_aefe_input)
+            #cur_recon_loss_l1 = F.l1_loss(reconImg, aefe_input) + F.l1_loss(tf_reconImg, tf_aefe_input)
+            #cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input)) + (1 - criterion(tf_reconImg, tf_aefe_input))
+            cur_recon_loss_l2 = F.mse_loss(reconImg, aefe_input)
+            cur_recon_loss_l1 = F.l1_loss(reconImg, aefe_input)
+            cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input))
 
             p_sep_loss = 0.5
-            p_kp_loss = 0.3
-            p_desc_loss = 10.0
+            p_kp_loss = 0.1
+            p_desc_loss = 0.4
             p_cosim_loss = 1.0
             p_recon_img_l2 = 2.0
             p_recon_img_l1 = 2.0
-            p_recon_img_ssim = 0.5
+            p_recon_img_ssim = 1.0
 
             my_sep_loss = p_sep_loss * cur_sep_loss
             my_kp_loss = p_kp_loss * loss_kp_out
@@ -224,9 +242,17 @@ def train():
             my_recon_loss_ssim = p_recon_img_ssim * cur_recon_loss_ssim
 
             loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
+            #loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
+            #loss = (my_sep_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
 
             print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", KP_matching:", '%.4f' % my_kp_loss.item(), ", Desc_matching:", '%.4f' % my_desc_loss.item(), ", Cosim:", '%.4f' % my_cosim_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
                   ", Recon_SSIM:", '%.4f' % my_recon_loss_ssim.item(), ", Recon_L1:", '%.4f' % my_recon_loss_l1.item())
+
+            #print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", KP_matching:", '%.4f' % my_kp_loss.item(), ", Desc_matching:", '%.4f' % my_desc_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
+            #      ", Recon_SSIM:", '%.4f' % my_recon_loss_ssim.item(), ", Recon_L1:", '%.4f' % my_recon_loss_l1.item())
+
+            #print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(), ", Cosim:", '%.4f' % my_cosim_loss.item(),
+            #      ", Recon_SSIM:", '%.4f' % my_recon_loss_ssim.item(), ", Recon_L1:", '%.4f' % my_recon_loss_l1.item())
 
             # ================Backward================
             optimizer_StackedHourglass_kp.zero_grad()
@@ -258,7 +284,7 @@ def train():
                 img_save_filename = ("/home/jsk/AEFE_SLAM/SaveReconstructedImg/%s_ep_%s.jpg" % (cur_filename, epoch + 1))
                 tf_img_save_filename = ("/home/jsk/AEFE_SLAM/SaveTFReconstructedImg/%s_ep_%s.jpg" % (cur_filename, epoch + 1))
                 save_image(reconImg, img_save_filename)
-                save_image(tf_reconImg, tf_img_save_filename)
+                #save_image(tf_reconImg, tf_img_save_filename)
 
         # if (epoch != 0) and ((epoch+1) % 5 == 0):
         torch.save({
@@ -317,8 +343,8 @@ if __name__ == '__main__':
     if not os.path.exists("SaveModelCKPT"):
         os.makedirs("SaveModelCKPT")
 
-    print("!!210427!!")
-    print("!!!!!This is train_allnew.py!!!!!")
+    print("!!210429!!><")
+    print("!!!!!This is train_allnew2.py!!!!!")
     train()
 
 ##########################################################################################################################

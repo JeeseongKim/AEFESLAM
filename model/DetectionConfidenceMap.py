@@ -693,6 +693,9 @@ class ReconWithKP(nn.Module):
         ReconKPMap = denum * torch.exp(tmp1 * tmp2)
         ReconKPMap = ReconKPMap.view(cur_batch, num_of_kp, self.my_height, self.my_width)
 
+        keypoints[:, :, 0] = keypoints[:, :, 0] / self.my_width
+        keypoints[:, :, 1] = keypoints[:, :, 1] / self.my_height
+
         return ReconKPMap
 
 class create_softmask (nn.Module):
