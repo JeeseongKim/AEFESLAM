@@ -9,7 +9,6 @@ import glob
 from torchvision import transforms
 import torchvision
 import cv2
-#cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 from torchvision.utils import save_image
 from torch.autograd import Variable

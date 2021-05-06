@@ -493,7 +493,7 @@ class DETR_KPnDesc(nn.Module):
         #self.STE = StraightThroughEstimator()
         #self.linear = torch.nn.Linear(2, 2)
 
-    def forward(self, encoder_input, Rk):
+    def forward(self, encoder_input):
 
         '''
         src = sequence to the encoder (S, N, E)
@@ -513,19 +513,23 @@ class DETR_KPnDesc(nn.Module):
         enc_ouput, h_kp = self.transformer(src=input, tgt1=trg)
 
         hh_kp = h_kp[0].permute(1, 0, 2)
-        tmp_1 = hh_kp.unsqueeze(3).unsqueeze(4)
-        n_Rk = Rk.unsqueeze(1)
-        tmp_2 = (tmp_1 * n_Rk).view(Rk.shape[0], tmp_1.shape[1], tmp_1.shape[2], -1)
-        KPnDesc = tmp_2.mean(dim=3)
+        #tmp_1 = hh_kp.unsqueeze(3).unsqueeze(4)
+        #n_Rk = Rk.unsqueeze(1)
+        #tmp_2 = (tmp_1 * n_Rk).view(Rk.shape[0], tmp_1.shape[1], tmp_1.shape[2], -1)
+        #KPnDesc = tmp_2.mean(dim=3)
 
 
-        myKP = self.linear_class_kp(KPnDesc)
-        kp = 1 / (1 + torch.exp(-3 * myKP))
+        #myKP = self.linear_class_kp(KPnDesc)
+        myKP = self.linear_class_kp(hh_kp)
+        kp = myKP.sigmoid()
+        #kp = 1 / (1 + torch.exp(-1 * myKP))
 
         #h_desc = h_kp.permute(1, 0, 2)
 
-        myDesc = self.linear_class_desc(KPnDesc)
-        desc = 1 / (1 + torch.exp(-1 * myDesc))
+        #myDesc = self.linear_class_desc(KPnDesc)
+        myDesc = self.linear_class_desc(hh_kp)
+        #desc = 1 / (1 + torch.exp(-1 * myDesc))
+        desc = torch.tanh(myDesc)
 
         return kp, desc
 

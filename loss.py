@@ -5,6 +5,8 @@ import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
+import cv2
+
 class loss_concentration(nn.Module):
     def __init__(self, my_map):
         super(loss_concentration, self).__init__()
@@ -142,9 +144,10 @@ class loss_cosim(nn.Module):
         #self.cosim_loss = (torch.mean(torch.sum(cosim(DetectionMap, tf_DetectionMap), dim=1)) ** 0.5)
         #self.cosim_loss = 1 - torch.sigmoid(torch.mean(cosim(DetectionMap, tf_DetectionMap)))
         #my_val = torch.mean(cosim(DetectionMap, tf_DetectionMap))
-        my_val = (cosim(DetectionMap, tf_DetectionMap)).sum()
+        #my_val = (cosim(DetectionMap, tf_DetectionMap)).sum()
+        my_val = (cosim(DetectionMap, tf_DetectionMap)).mean()
         #self.cosim_loss = 1 - ((1-torch.tanh(1e-6 * my_val)) * (1+torch.tanh(1e-6 * my_val)))
-        self.cosim_loss = torch.exp(-1e-7 * my_val)
+        self.cosim_loss = torch.exp(-1.0 * my_val)
 
     def forward(self):
         return self.cosim_loss
@@ -372,22 +375,7 @@ class HungarianMatcher(nn.Module):
 
     @torch.no_grad()
     def forward(self, theta, my_feature, my_tf_feature, my_width, my_height):
-        """ Performs the matching
-        Params:
-            outputs: This is a dict that contains at least these entries:
-                 "pred_logits": Tensor of dim [batch_size, num_queries, num_classes] with the classification logits
-                 "pred_boxes": Tensor of dim [batch_size, num_queries, 4] with the predicted box coordinates
-            targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
-                 "labels": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
-                           objects in the target) containing the class labels
-                 "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates
-        Returns:
-            A list of size batch_size, containing tuples of (index_i, index_j) where:
-                - index_i is the indices of the selected predictions (in order)
-                - index_j is the indices of the corresponding selected targets (in order)
-            For each batch element, it holds:
-                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
-        """
+
         cur_batch, num_of_kp, _ = my_feature.shape
 
         my_kp = my_feature[:, :, 0:2]
@@ -416,18 +404,54 @@ class HungarianMatcher(nn.Module):
         predicted_tf_kp = my_tf_kp
         cal_tf_kp = o_tf_keypoints
 
+        pts1 = predicted_tf_kp.int().detach().cpu().numpy()
+        pts2 = cal_tf_kp.int().detach().cpu().numpy()
+
+        pts1 = pts1.reshape(pts1.shape[0]*pts1.shape[1], pts1.shape[2])
+        pts2 = pts2.reshape(pts2.shape[0]*pts2.shape[1], pts2.shape[2])
+
+        FundamentalMatrix, mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_8POINT)
+
+        ppts1 = torch.ones(predicted_tf_kp.shape[0]*predicted_tf_kp.shape[1], predicted_tf_kp.shape[2]+1)
+        ppts2 = torch.ones(cal_tf_kp.shape[0]*cal_tf_kp.shape[1], cal_tf_kp.shape[2]+1)
+
+        pts1 = torch.tensor(pts1)
+        pts2 = torch.tensor(pts2)
+
+        ppts1[:, 0] = pts1[:, 0]
+        ppts1[:, 1] = pts1[:, 1]
+        ppts1[:, 2] = 1.0
+
+        ppts2[:, 0] = pts2[:, 0]
+        ppts2[:, 1] = pts2[:, 1]
+        ppts2[:, 2] = 1.0
+
+        F = torch.tensor(FundamentalMatrix)
+        aaa = torch.matmul(ppts1.float(), F.float())
+        t_ppts2 = ppts2.permute(1, 0)
+        bbb = torch.matmul(aaa, t_ppts2.float())
+
+        cost_kp = torch.abs(bbb)
+
+        flatten_my_desc = my_desc.flatten(0, 1)
+        flatten_my_tf_desc = my_tf_desc.flatten(0, 1)
+        cost_desc = torch.cdist(flatten_my_desc, flatten_my_tf_desc, p=1)
+
+        '''
         # We flatten to compute the cost matrices in a batch
         flatten_p_tf_kp = predicted_tf_kp.flatten(0, 1)
         flatten_cal_tf_kp = cal_tf_kp.flatten(0, 1)
 
-        flatten_my_desc = my_desc.flatten(0, 1)
-        flatten_my_tf_desc = my_tf_desc.flatten(0, 1)
+        #flatten_my_desc = my_desc.flatten(0, 1)
+        #flatten_my_tf_desc = my_tf_desc.flatten(0, 1)
 
-        cost_kp = -torch.cdist(flatten_p_tf_kp, flatten_cal_tf_kp, p=1)
-        cost_desc = -torch.cdist(flatten_my_desc, flatten_my_tf_desc, p=1)
+        cost_kp = torch.cdist(flatten_p_tf_kp, flatten_cal_tf_kp, p=1)
+        #cost_desc = torch.cdist(flatten_my_desc, flatten_my_tf_desc, p=1)
+        '''
 
         # Final cost matrix
         C = self.cost_kp * cost_kp + self.cost_desc * cost_desc
+        #C = self.cost_kp * cost_kp + self.cost_desc * cost_desc
         C = C.view(cur_batch, num_of_kp, -1).cpu()
 
         sizes = num_of_kp
@@ -436,7 +460,8 @@ class HungarianMatcher(nn.Module):
 
         match = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
-        return match, cal_tf_kp
+        #return match, cal_tf_kp
+        return match
 
 class matcher_criterion(nn.Module):
     """ This class computes the loss for DETR.
@@ -470,21 +495,54 @@ class matcher_criterion(nn.Module):
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
 
-    def forward(self, match, tf_kp, cal_tf_kp, desc, tf_desc):
+    def _get_tgt_permutation_idx(self, indices):
+        # permute targets following indices
+        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+        return batch_idx, tgt_idx
 
-        idx = self._get_src_permutation_idx(match)
+    def forward(self, match, kp, tf_kp, desc, tf_desc):
 
-        src_kp = tf_kp[idx]
-        target_kp = torch.cat([t[i] for t, (_, i) in zip(cal_tf_kp, match)], dim=0)
+        idx_src = self._get_src_permutation_idx(match)
+        idx_trg = self._get_tgt_permutation_idx(match)
 
-        src_desc = desc[idx]
-        target_desc = torch.cat([t[i] for t, (_, i) in zip(tf_desc, match)], dim=0)
+        src_kp = kp[idx_src]
+        target_kp = tf_kp[idx_trg]
 
-        loss_kp = F.l1_loss(src_kp, target_kp, reduction='none')
-        loss_kp_out = loss_kp.sum()/src_kp.shape[0]
+        pts1 = src_kp.int().detach().cpu().numpy()
+        pts2 = target_kp.int().detach().cpu().numpy()
 
-        loss_desc = F.l1_loss(src_desc, target_desc, reduction='none')
-        loss_desc_out = loss_desc.sum() / src_desc.shape[0]
+        pts1 = pts1.reshape(kp.shape[0] * kp.shape[1], kp.shape[2])
+        pts2 = pts2.reshape(tf_kp.shape[0] * tf_kp.shape[1], tf_kp.shape[2])
 
+        FundamentalMatrix, mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_8POINT)
 
-        return loss_kp_out, loss_desc_out
+        ppts1 = torch.ones(kp.shape[0] * kp.shape[1], kp.shape[2] + 1)
+        ppts2 = torch.ones(kp.shape[0] * kp.shape[1], kp.shape[2] + 1)
+
+        pts1 = torch.tensor(pts1)
+        pts2 = torch.tensor(pts2)
+
+        ppts1[:, 0] = pts1[:, 0]
+        ppts1[:, 1] = pts1[:, 1]
+        ppts1[:, 2] = 1.0
+
+        ppts2[:, 0] = pts2[:, 0]
+        ppts2[:, 1] = pts2[:, 1]
+        ppts2[:, 2] = 1.0
+
+        F = torch.tensor(FundamentalMatrix)
+
+        aaa = torch.matmul(ppts1.float(), F.float())
+        t_ppts2 = ppts2.permute(1, 0)
+        bbb = torch.matmul(aaa, t_ppts2.float())
+
+        #loss_kp = F.mse_loss(src_kp, target_kp)
+        loss_kp = torch.abs(bbb).sum()
+
+        src_desc = desc[idx_src]
+        target_desc = tf_desc[idx_trg]
+
+        loss_desc = torch.nn.functional.mse_loss(src_desc, target_desc)
+
+        return loss_kp, loss_desc

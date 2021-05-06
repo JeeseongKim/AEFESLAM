@@ -77,7 +77,7 @@ def train():
 
     model_DETR_kp = DETR_KPnDesc(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
     model_DETR_kp = nn.DataParallel(model_DETR_kp).cuda()
-    optimizer_DETR_kp = torch.optim.AdamW(model_DETR_kp.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer_DETR_kp = torch.optim.AdamW(model_DETR_kp.parameters(), lr=learning_rate, weight_decay=1e-4)
 
     #model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=256, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
     model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=1280, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
@@ -90,7 +90,7 @@ def train():
 
     ###################################################################################################################
     # call checkpoint
-
+    '''
     if os.path.exists("/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model.pth"):
         # if os.path.exists("/home/jsk/AEFE_SLAM/SaveModelCKPT/210421_test.pth"):
         # if os.path.exists("./SaveModelCKPT/210401.pth"):
@@ -113,7 +113,7 @@ def train():
         lr_scheduler_optimizer1.load_state_dict(checkpoint['lr_scheduler_optimizer1'])
         lr_scheduler_optimizer2.load_state_dict(checkpoint['lr_scheduler_optimizer2'])
         lr_scheduler_optimizer3.load_state_dict(checkpoint['lr_scheduler_optimizer3'])
-
+    '''
     ###################################################################################################################
 
     dataset = my_dataset(my_width=my_width, my_height=my_height)
@@ -143,6 +143,7 @@ def train():
             aefe_input = input_img.cuda()  # (b, 3, height, width)
 
             theta = random.uniform(-10, 10)
+            theta = -theta
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
 
@@ -153,18 +154,28 @@ def train():
             Rk_flatten = Rk.flatten(2)
             tf_Rk_flatten = tf_Rk.flatten(2)
 
-            kp, desc = model_DETR_kp(Rk_flatten, Rk)
-            tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten, tf_Rk)
-            desc = torch.bernoulli(desc)
+            #kp, desc = model_DETR_kp(Rk_flatten, Rk)
+            #tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten, tf_Rk)
+            kp, desc = model_DETR_kp(Rk_flatten)
+            tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten)
+
+            #desc = torch.bernoulli(desc)
+            #tf_desc = torch.bernoulli(tf_desc)
+
+            desc = torch.sign(desc)
+            tf_desc = torch.sign(tf_desc)
+
             MySTE = StraightThroughEstimator()
             desc = MySTE(desc)
+            tf_desc = MySTE(tf_desc)
             ##########################################DECODER##########################################
             fn_ReconKp = ReconWithKP(Rk.shape[2], Rk.shape[3])
-            recon_kp_1 = fn_ReconKp(kp, 0.5)
-            recon_kp_2 = fn_ReconKp(kp, 1.0)
-            recon_kp_3 = fn_ReconKp(kp, 3.0)
-            recon_kp_4 = fn_ReconKp(kp, 5.0)
-            recon_kp_5 = fn_ReconKp(kp, 10.0)
+            recon_kp_1 = fn_ReconKp(kp, 0.1)
+            recon_kp_2 = fn_ReconKp(kp, 0.5)
+            recon_kp_3 = fn_ReconKp(kp, 1.0)
+            recon_kp_4 = fn_ReconKp(kp, 3.0)
+            recon_kp_5 = fn_ReconKp(kp, 5.0)
+            #recon_kp_5 = fn_ReconKp(kp, 10.0)
 
             #recon_tf_kp = fn_ReconKp(tf_kp, 1.0)  # (b,200,48,160)
 
@@ -181,11 +192,11 @@ def train():
             my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
 
             #reconInput = (recon_kp.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
-            reconInput_1 = (recon_kp_1.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
-            reconInput_2 = (recon_kp_2.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
-            reconInput_3 = (recon_kp_3.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
-            reconInput_4 = (recon_kp_4.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
-            reconInput_5 = (recon_kp_5.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_1 = (recon_kp_1.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk
+            reconInput_2 = (recon_kp_2.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk
+            reconInput_3 = (recon_kp_3.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk
+            reconInput_4 = (recon_kp_4.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk
+            reconInput_5 = (recon_kp_5.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk
             #tf_reconInput = (recon_tf_kp.unsqueeze(2) * tf_desc.unsqueeze(3).unsqueeze(4)).mean(1)
 
             reconInput = torch.cat([reconInput_1, reconInput_2, reconInput_3, reconInput_4, reconInput_5], dim=1)
@@ -210,11 +221,11 @@ def train():
 
             # Encoder Loss
             # feature matching loss
-            fn_hungarian_matcher = HungarianMatcher()
-            match, cal_tf_kp = fn_hungarian_matcher(theta, my_feature, my_tf_feature, my_width, my_height)
+            fn_hungarian_matcher = HungarianMatcher(cost_kp=1e+5, cost_desc=1)
+            match = fn_hungarian_matcher(theta, my_feature, my_tf_feature, my_width, my_height)
 
             fn_matching_loss = matcher_criterion()
-            loss_kp_out, loss_desc_out = fn_matching_loss(match, tf_kp, cal_tf_kp, desc, tf_desc)
+            loss_kp_out, loss_desc_out = fn_matching_loss(match, kp, tf_kp, desc, tf_desc)
 
             # Reconstruction Loss
             criterion = SSIM()
@@ -226,8 +237,8 @@ def train():
             cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input))
 
             p_sep_loss = 0.5
-            p_kp_loss = 0.1
-            p_desc_loss = 0.4
+            p_kp_loss = 0.01
+            p_desc_loss = 5.0
             p_cosim_loss = 1.0
             p_recon_img_l2 = 2.0
             p_recon_img_l1 = 2.0
@@ -282,7 +293,7 @@ def train():
                 fn_save_tfkpimg = savetfKPimg()
                 fn_save_tfkpimg(tf_aefe_input, tf_kp, epoch + 1, cur_filename)
                 img_save_filename = ("/home/jsk/AEFE_SLAM/SaveReconstructedImg/%s_ep_%s.jpg" % (cur_filename, epoch + 1))
-                tf_img_save_filename = ("/home/jsk/AEFE_SLAM/SaveTFReconstructedImg/%s_ep_%s.jpg" % (cur_filename, epoch + 1))
+                #tf_img_save_filename = ("/home/jsk/AEFE_SLAM/SaveTFReconstructedImg/%s_ep_%s.jpg" % (cur_filename, epoch + 1))
                 save_image(reconImg, img_save_filename)
                 #save_image(tf_reconImg, tf_img_save_filename)
 
@@ -343,7 +354,7 @@ if __name__ == '__main__':
     if not os.path.exists("SaveModelCKPT"):
         os.makedirs("SaveModelCKPT")
 
-    print("!!210429!!><")
+    print("!!210506!!><")
     print("!!!!!This is train_allnew2.py!!!!!")
     train()
 
