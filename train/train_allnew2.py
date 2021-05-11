@@ -27,6 +27,7 @@ vis = visdom.Visdom()
 plot_all = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='All Loss'))
 plot_sep = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Separation Loss'))
 
+plot_fundamental = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Fundamental loss (KP)'))
 plot_kp_matching = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Matching loss (KP)'))
 plot_desc_matching = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]), opts=dict(title='Matching loss (Desc)'))
 
@@ -77,7 +78,7 @@ def train():
 
     model_DETR_kp = DETR_KPnDesc(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
     model_DETR_kp = nn.DataParallel(model_DETR_kp).cuda()
-    optimizer_DETR_kp = torch.optim.AdamW(model_DETR_kp.parameters(), lr=learning_rate, weight_decay=1e-4)
+    optimizer_DETR_kp = torch.optim.AdamW(model_DETR_kp.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     #model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=256, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
     model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=1280, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
@@ -90,7 +91,7 @@ def train():
 
     ###################################################################################################################
     # call checkpoint
-    '''
+
     if os.path.exists("/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model.pth"):
         # if os.path.exists("/home/jsk/AEFE_SLAM/SaveModelCKPT/210421_test.pth"):
         # if os.path.exists("./SaveModelCKPT/210401.pth"):
@@ -113,7 +114,7 @@ def train():
         lr_scheduler_optimizer1.load_state_dict(checkpoint['lr_scheduler_optimizer1'])
         lr_scheduler_optimizer2.load_state_dict(checkpoint['lr_scheduler_optimizer2'])
         lr_scheduler_optimizer3.load_state_dict(checkpoint['lr_scheduler_optimizer3'])
-    '''
+
     ###################################################################################################################
 
     dataset = my_dataset(my_width=my_width, my_height=my_height)
@@ -129,6 +130,7 @@ def train():
 
         running_sep_loss = 0
 
+        running_fundamental_loss = 0
         running_kp_match_loss = 0
         running_desc_match_loss = 0
 
@@ -143,21 +145,29 @@ def train():
             aefe_input = input_img.cuda()  # (b, 3, height, width)
 
             theta = random.uniform(-10, 10)
-            theta = -theta
             my_transform = torchvision.transforms.RandomAffine((theta, theta), translate=None, scale=None, shear=None, resample=0, fillcolor=0)
             tf_aefe_input = my_transform(aefe_input)  # randomly rotated image
 
             ##########################################ENCODER##########################################
+
             Rk = model_StackedHourglassForKP(aefe_input)
             tf_Rk = model_StackedHourglassForKP(tf_aefe_input)
 
-            Rk_flatten = Rk.flatten(2)
-            tf_Rk_flatten = tf_Rk.flatten(2)
+            cur_batch = Rk.shape[0]
+
+            #Rk_flatten = Rk.flatten(2)
+            #tf_Rk_flatten = tf_Rk.flatten(2)
 
             #kp, desc = model_DETR_kp(Rk_flatten, Rk)
             #tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten, tf_Rk)
-            kp, desc = model_DETR_kp(Rk_flatten)
-            tf_kp, tf_desc = model_DETR_kp(tf_Rk_flatten)
+            kp, desc = model_DETR_kp(Rk)
+            tf_kp, tf_desc = model_DETR_kp(tf_Rk)
+
+            kp = kp.view(cur_batch, num_of_kp, 2)
+            tf_kp = tf_kp.view(cur_batch, num_of_kp, 2)
+
+            desc = desc.view(cur_batch, num_of_kp, feature_dimension)
+            tf_desc = tf_desc.view(cur_batch, num_of_kp, feature_dimension)
 
             #desc = torch.bernoulli(desc)
             #tf_desc = torch.bernoulli(tf_desc)
@@ -221,23 +231,21 @@ def train():
 
             # Encoder Loss
             # feature matching loss
-            fn_hungarian_matcher = HungarianMatcher(cost_kp=1e+5, cost_desc=1)
-            match = fn_hungarian_matcher(theta, my_feature, my_tf_feature, my_width, my_height)
+            fn_hungarian_matcher = HungarianMatcher(cost_kp=1.0, cost_desc=1)
+            match = fn_hungarian_matcher(-theta, my_feature, my_tf_feature, my_width, my_height)
 
             fn_matching_loss = matcher_criterion()
-            loss_kp_out, loss_desc_out = fn_matching_loss(match, kp, tf_kp, desc, tf_desc)
+            loss_fundamental, loss_kp_match, loss_desc = fn_matching_loss(match, kp, tf_kp, desc, tf_desc)
 
             # Reconstruction Loss
             criterion = SSIM()
-            #cur_recon_loss_l2 = F.mse_loss(reconImg, aefe_input) + F.mse_loss(tf_reconImg, tf_aefe_input)
-            #cur_recon_loss_l1 = F.l1_loss(reconImg, aefe_input) + F.l1_loss(tf_reconImg, tf_aefe_input)
-            #cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input)) + (1 - criterion(tf_reconImg, tf_aefe_input))
             cur_recon_loss_l2 = F.mse_loss(reconImg, aefe_input)
             cur_recon_loss_l1 = F.l1_loss(reconImg, aefe_input)
             cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input))
 
             p_sep_loss = 0.5
-            p_kp_loss = 0.01
+            p_fundamental_loss = 5
+            p_kp_loss = 1.0
             p_desc_loss = 5.0
             p_cosim_loss = 1.0
             p_recon_img_l2 = 2.0
@@ -245,18 +253,20 @@ def train():
             p_recon_img_ssim = 1.0
 
             my_sep_loss = p_sep_loss * cur_sep_loss
-            my_kp_loss = p_kp_loss * loss_kp_out
-            my_desc_loss = p_desc_loss * loss_desc_out
+            my_fundamental_loss = p_fundamental_loss * loss_fundamental
+            my_kp_loss = p_kp_loss * loss_kp_match
+            my_desc_loss = p_desc_loss * loss_desc
             my_cosim_loss = p_cosim_loss * cur_cosim_loss
             my_recon_loss_l2 = p_recon_img_l2 * cur_recon_loss_l2
             my_recon_loss_l1 = p_recon_img_l1 * cur_recon_loss_l1
             my_recon_loss_ssim = p_recon_img_ssim * cur_recon_loss_ssim
 
-            loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
+            loss = (my_sep_loss + my_fundamental_loss + my_kp_loss + my_desc_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
+            #loss = (my_sep_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
             #loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
             #loss = (my_sep_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
 
-            print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", KP_matching:", '%.4f' % my_kp_loss.item(), ", Desc_matching:", '%.4f' % my_desc_loss.item(), ", Cosim:", '%.4f' % my_cosim_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
+            print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", Fundamental: ", '%.4f' % my_fundamental_loss.item(), ", KP_matching:", '%.4f' % my_kp_loss.item(), ", Desc_matching:", '%.4f' % my_desc_loss.item(), ", Cosim:", '%.4f' % my_cosim_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
                   ", Recon_SSIM:", '%.4f' % my_recon_loss_ssim.item(), ", Recon_L1:", '%.4f' % my_recon_loss_l1.item())
 
             #print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", KP_matching:", '%.4f' % my_kp_loss.item(), ", Desc_matching:", '%.4f' % my_desc_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
@@ -278,6 +288,7 @@ def train():
 
             running_loss = running_loss + loss.item()
             running_sep_loss = running_sep_loss + my_sep_loss.item()
+            running_fundamental_loss = running_fundamental_loss + my_fundamental_loss.item()
             running_kp_match_loss = running_kp_match_loss + my_kp_loss.item()
             running_desc_match_loss = running_desc_match_loss + my_desc_loss.item()
             running_cosim_loss = running_cosim_loss + my_cosim_loss.item()
@@ -321,6 +332,7 @@ def train():
 
         vis.line(Y=[running_sep_loss], X=np.array([epoch]), win=plot_sep, update='append')
 
+        vis.line(Y=[running_fundamental_loss], X=np.array([epoch]), win=plot_fundamental, update='append')
         vis.line(Y=[running_kp_match_loss], X=np.array([epoch]), win=plot_kp_matching, update='append')
         vis.line(Y=[running_desc_match_loss], X=np.array([epoch]), win=plot_desc_matching, update='append')
 
@@ -354,7 +366,7 @@ if __name__ == '__main__':
     if not os.path.exists("SaveModelCKPT"):
         os.makedirs("SaveModelCKPT")
 
-    print("!!210506!!><")
+    print("!!210511!!><")
     print("!!!!!This is train_allnew2.py!!!!!")
     train()
 

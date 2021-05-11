@@ -475,25 +475,28 @@ class DETR_KPnDesc(nn.Module):
 
         #Transformer
         self.transformer = Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, return_intermediate_dec=True)
-        self.transformer.apply(weights_init)
-        #torch.nn.init.xavier_normal_(self.transformer.weight)
-        #output positional encodings (object queries)
-        self.query_pos = nn.Embedding(num_voters, hidden_dim)
-        torch.nn.init.xavier_normal_(self.query_pos.weight)
+        #self.transformer.apply(weights_init)
+        self.query_embed = nn.Embedding(num_voters, hidden_dim)
+        #torch.nn.init.xavier_normal_(self.query_embed.weight)
+
         self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 4)
-        #torch.nn.init.xavier_normal_(self.linear_class_kp.weight)
+        self.linear_class_desc = MLP(hidden_dim, hidden_dim, 256, 3)
+
+        self.get_answer = torch.nn.Linear(nheads * num_voters, num_voters)
+
         #self.linear_class_kp = torch.nn.Linear(256, 2)
-        self.linear_class_kp.apply(weights_init)
+        #torch.nn.init.xavier_normal_(self.linear_class_kp.weight)
+        #self.linear_class_kp.apply(weights_init)
 
         #self.linear_class_desc = torch.nn.Linear(256, 256)
-        self.linear_class_desc = MLP(hidden_dim, hidden_dim, 256, 3)
+
         #torch.nn.init.xavier_normal_(self.linear_class_desc.weight)
-        self.linear_class_desc.apply(weights_init)
+        #self.linear_class_desc.apply(weights_init)
 
         #self.STE = StraightThroughEstimator()
         #self.linear = torch.nn.Linear(2, 2)
 
-    def forward(self, encoder_input):
+    def forward(self, src):
 
         '''
         src = sequence to the encoder (S, N, E)
@@ -505,33 +508,41 @@ class DETR_KPnDesc(nn.Module):
         E: feature number (hidden_dim)
         '''
 
-        cur_batch = encoder_input.shape[0]
-        trg_tmp = self.query_pos.weight
-        trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
-        input = encoder_input.permute(2, 0, 1)
+        #cur_batch = encoder_input.shape[0]
+        ##trg_tmp = self.query_pos.weight
+        ##trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
+        #query_embed = self.query_pos.weight
+        #query_embed = query_embed.unsqueeze(1).repeat(1, cur_batch, 1)
 
-        enc_ouput, h_kp = self.transformer(src=input, tgt1=trg)
+        #trg = torch.zeros_like(query_embed)
+        #input = encoder_input.permute(2, 0, 1)
 
-        hh_kp = h_kp[0].permute(1, 0, 2)
+        h_kp = self.transformer(src=src, query_embed=self.query_embed.weight)[0]
+        hh_kp = torch.mean(h_kp, dim=1)
+
+        #hh_kp = h_kp.permute(1, 0, 2)
         #tmp_1 = hh_kp.unsqueeze(3).unsqueeze(4)
         #n_Rk = Rk.unsqueeze(1)
         #tmp_2 = (tmp_1 * n_Rk).view(Rk.shape[0], tmp_1.shape[1], tmp_1.shape[2], -1)
         #KPnDesc = tmp_2.mean(dim=3)
 
-
         #myKP = self.linear_class_kp(KPnDesc)
         myKP = self.linear_class_kp(hh_kp)
-        kp = myKP.sigmoid()
-        #kp = 1 / (1 + torch.exp(-1 * myKP))
+        #kp = myKP.sigmoid()
+        multi_kp = torch.cat([myKP[0], myKP[1], myKP[2], myKP[3]], dim=0)
+        final_kp = self.get_answer(multi_kp.permute(1, 0)).permute(1, 0).sigmoid()
+        #kp = 1 / (1 + torch.exp(-5 * myKP))
 
         #h_desc = h_kp.permute(1, 0, 2)
 
         #myDesc = self.linear_class_desc(KPnDesc)
         myDesc = self.linear_class_desc(hh_kp)
+        multi_desc = torch.cat([myDesc[0], myDesc[1], myDesc[2], myDesc[3]], dim=0)
         #desc = 1 / (1 + torch.exp(-1 * myDesc))
-        desc = torch.tanh(myDesc)
+        desc = self.get_answer(multi_desc.permute(1, 0)).permute(1, 0)
+        final_desc = torch.tanh(desc)
 
-        return kp, desc
+        return final_kp, final_desc
 
 class DETR4f(nn.Module):
     def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):

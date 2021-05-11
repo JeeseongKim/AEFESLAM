@@ -19,17 +19,17 @@ class make_transformation_M(nn.Module):
         super(make_transformation_M, self).__init__()
 
     def forward(self, r_theta, t_x, t_y):
+        radian_theta = r_theta * 3.141592/180   #degree
         dx = random.uniform(-t_x, t_x)
         dy = random.uniform(-t_y, t_y)
-        theta = random.uniform(-r_theta, r_theta)
 
         transformation_g = torch.zeros(4, 4)
-        transformation_g[0, 0] = math.cos(theta)
-        transformation_g[0, 1] = -math.sin(theta)
+        transformation_g[0, 0] = math.cos(radian_theta)
+        transformation_g[0, 1] = -math.sin(radian_theta)
         transformation_g[0, 3] = dx
 
-        transformation_g[1, 0] = math.sin(theta)
-        transformation_g[1, 1] = math.cos(theta)
+        transformation_g[1, 0] = math.sin(radian_theta)
+        transformation_g[1, 1] = math.cos(radian_theta)
         transformation_g[1, 3] = dy
 
         transformation_g[2, 2] = 1.0
@@ -60,8 +60,8 @@ class my_dataset_originalImg(Dataset):
         #lg dataset(96,128))
 
         #for filename in (sorted(glob.glob('./Kitti/sequences/00/image_2/*.png'))):
-        #for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
-        for filename in (sorted(glob.glob('./Kitti_tmp/sequences/05/image_2/*.png'))):
+        for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('./Kitti_tmp/sequences/05/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./data/*.jpg'))):
             im = Image.open(filename)
 

@@ -54,7 +54,9 @@ class loss_separation(nn.Module):
         #self.sep_loss_output = 4 * torch.sigmoid(1e-6 * sep_loss) * (1 - torch.sigmoid(1e-6 * sep_loss))
         #self.sep_loss_output = 10 * speed_sigmoid(1e-2*sep_loss) * (1 - speed_sigmoid(1e-2*sep_loss))
         #self.sep_loss_output = torch.exp(-0.00001*sep_loss)
-        self.sep_loss_output = torch.exp(-1e-5*sep_loss)
+        #self.sep_loss_output = torch.exp(-1e-5*sep_loss)
+        self.sep_loss_output = torch.exp(-5e-7*sep_loss)
+        #self.sep_loss_output = 4 * torch.sigmoid(1e-9 * sep_loss) * (1 - torch.sigmoid(1e-9 * sep_loss))
         #self.sep_loss_output = 4 * torch.sigmoid(1e-9 * sep_loss) * (1 - torch.sigmoid(1e-9 * sep_loss))
 
     def forward(self):
@@ -362,12 +364,6 @@ class HungarianMatcher(nn.Module):
     """
 
     def __init__(self, cost_kp: float = 1, cost_desc: float = 1):
-        """Creates the matcher
-        Params:
-            cost_class: This is the relative weight of the classification error in the matching cost
-            cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
-            cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
-        """
         super().__init__()
         self.cost_kp = cost_kp
         self.cost_desc = cost_desc
@@ -404,38 +400,40 @@ class HungarianMatcher(nn.Module):
         predicted_tf_kp = my_tf_kp
         cal_tf_kp = o_tf_keypoints
 
-        pts1 = predicted_tf_kp.int().detach().cpu().numpy()
-        pts2 = cal_tf_kp.int().detach().cpu().numpy()
+        cost_kp = torch.cdist(predicted_tf_kp.flatten(0, 1), cal_tf_kp.flatten(0, 1), p=2).cuda()
+
+        '''
+        pts1 = my_kp.int().detach().cpu().numpy()
+        pts2 = my_tf_kp.int().detach().cpu().numpy()
 
         pts1 = pts1.reshape(pts1.shape[0]*pts1.shape[1], pts1.shape[2])
         pts2 = pts2.reshape(pts2.shape[0]*pts2.shape[1], pts2.shape[2])
 
         FundamentalMatrix, mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_8POINT)
 
-        ppts1 = torch.ones(predicted_tf_kp.shape[0]*predicted_tf_kp.shape[1], predicted_tf_kp.shape[2]+1)
-        ppts2 = torch.ones(cal_tf_kp.shape[0]*cal_tf_kp.shape[1], cal_tf_kp.shape[2]+1)
+        ppts1 = torch.ones(cur_batch*num_of_kp, 3)
+        ppts2 = torch.ones(cur_batch*num_of_kp, 3)
 
-        pts1 = torch.tensor(pts1)
-        pts2 = torch.tensor(pts2)
-
-        ppts1[:, 0] = pts1[:, 0]
-        ppts1[:, 1] = pts1[:, 1]
+        ppts1[:, 0] = torch.tensor(pts1[:, 0])
+        ppts1[:, 1] = torch.tensor(pts1[:, 1])
         ppts1[:, 2] = 1.0
 
-        ppts2[:, 0] = pts2[:, 0]
-        ppts2[:, 1] = pts2[:, 1]
+        ppts2[:, 0] = torch.tensor(pts2[:, 0])
+        ppts2[:, 1] = torch.tensor(pts2[:, 1])
         ppts2[:, 2] = 1.0
 
-        F = torch.tensor(FundamentalMatrix)
-        aaa = torch.matmul(ppts1.float(), F.float())
-        t_ppts2 = ppts2.permute(1, 0)
-        bbb = torch.matmul(aaa, t_ppts2.float())
+        t_ppts1 = ppts1.permute(1, 0)
+        tensor_FundamentalM = torch.tensor(FundamentalMatrix)
+        aaa = torch.matmul(tensor_FundamentalM.float(), t_ppts1.float())
+        #t_ppts2 = ppts2.permute(1, 0)
+        bbb = torch.matmul(ppts2.float(), aaa)
 
-        cost_kp = torch.abs(bbb)
+        cost_kp = torch.abs(bbb).cuda()
+        '''
 
         flatten_my_desc = my_desc.flatten(0, 1)
         flatten_my_tf_desc = my_tf_desc.flatten(0, 1)
-        cost_desc = torch.cdist(flatten_my_desc, flatten_my_tf_desc, p=1)
+        cost_desc = torch.cdist(flatten_my_desc, flatten_my_tf_desc, p=2).cuda()
 
         '''
         # We flatten to compute the cost matrices in a batch
@@ -512,9 +510,6 @@ class matcher_criterion(nn.Module):
         pts1 = src_kp.int().detach().cpu().numpy()
         pts2 = target_kp.int().detach().cpu().numpy()
 
-        pts1 = pts1.reshape(kp.shape[0] * kp.shape[1], kp.shape[2])
-        pts2 = pts2.reshape(tf_kp.shape[0] * tf_kp.shape[1], tf_kp.shape[2])
-
         FundamentalMatrix, mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_8POINT)
 
         ppts1 = torch.ones(kp.shape[0] * kp.shape[1], kp.shape[2] + 1)
@@ -536,13 +531,17 @@ class matcher_criterion(nn.Module):
         aaa = torch.matmul(ppts1.float(), F.float())
         t_ppts2 = ppts2.permute(1, 0)
         bbb = torch.matmul(aaa, t_ppts2.float())
+        tmp_result = torch.abs(bbb)
 
         #loss_kp = F.mse_loss(src_kp, target_kp)
-        loss_kp = torch.abs(bbb).sum()
+        loss_fundamental = torch.trace(tmp_result).cuda()
+        loss_kp_match = torch.nn.functional.mse_loss(src_kp.float(), target_kp.float())
+
+        #loss_kp = 10 * loss_fundamental + 1 * loss_kp_match
 
         src_desc = desc[idx_src]
         target_desc = tf_desc[idx_trg]
 
         loss_desc = torch.nn.functional.mse_loss(src_desc, target_desc)
 
-        return loss_kp, loss_desc
+        return loss_fundamental, loss_kp_match, loss_desc

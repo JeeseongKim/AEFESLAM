@@ -48,7 +48,7 @@ class Transformer(Module):
                  num_decoder_layers: int = 6, dim_feedforward: int = 2048, dropout: float = 0.1,
                  activation: str = "relu", normalize_before=False, return_intermediate_dec=False, custom_encoder: Optional[Any] = None, custom_decoder: Optional[Any] = None) -> None:
         super(Transformer, self).__init__()
-
+        '''
         if custom_encoder is not None:
             self.encoder = custom_encoder
         else:
@@ -70,16 +70,29 @@ class Transformer(Module):
 
         self.d_model = d_model
         self.nhead = nhead
+        '''
+        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
+        encoder_norm = torch.nn.LayerNorm(d_model) if normalize_before else None
+        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+
+        decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
+        decoder_norm = torch.nn.LayerNorm(d_model)
+        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm, return_intermediate=return_intermediate_dec)
+
+        self._reset_parameters()
 
     #def forward(self, src: Tensor, tgt1: Tensor, tgt2: Tensor, src_mask: Optional[Tensor] = None, tgt_mask: Optional[Tensor] = None,
     #            memory_mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None,
     #            tgt_key_padding_mask: Optional[Tensor] = None, memory_key_padding_mask: Optional[Tensor] = None) -> Tensor:
 
-    def forward(self, src: Tensor, tgt1: Tensor, src_mask: Optional[Tensor] = None,
-                tgt_mask: Optional[Tensor] = None,
-                memory_mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None,
-                tgt_key_padding_mask: Optional[Tensor] = None,
-                memory_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+    #def forward(self, src: Tensor, tgt1: Tensor, src_mask: Optional[Tensor] = None,
+    #            tgt_mask: Optional[Tensor] = None,
+    #            memory_mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None,
+    #            tgt_key_padding_mask: Optional[Tensor] = None,
+    #            memory_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+
+    #def forward(self, src, mask, query_embed, pos_embed):
+    def forward(self, src, query_embed):
         r"""Take in and process masked source/target sequences.
 
         Args:
@@ -124,13 +137,29 @@ class Transformer(Module):
         Examples:
             #>>> output = transformer_model(src, tgt, src_mask=src_mask, tgt_mask=tgt_mask)
         """
-
+        #bs, c, h, w = src.shape
+        '''
         if src.size(1) != tgt1.size(1):
             raise RuntimeError("the batch number of src and tgt must be equal")
 
         if src.size(2) != self.d_model or tgt1.size(2) != self.d_model:
             raise RuntimeError("the feature number of src and tgt must be equal to d_model")
+        '''
+        bs, c, h, w = src.shape
+        src = src.flatten(2).permute(2, 0, 1)
+        #pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+        #mask = mask.flatten(1)
 
+        tgt = torch.zeros_like(query_embed)
+        #memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+        memory = self.encoder(src)
+        #hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,pos=pos_embed, query_pos=query_embed)
+        hs = self.decoder(tgt, memory, query_pos=query_embed)
+
+        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+
+        '''
         memory = self.encoder(src, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
 
         output_1 = self.decoder_1(tgt1, memory, tgt_mask=tgt_mask, memory_mask=memory_mask,
@@ -142,7 +171,8 @@ class Transformer(Module):
         #                      memory_key_padding_mask=memory_key_padding_mask)
 
         #return memory, output_1, output_2
-        return memory, output_1
+        return output_1.transpose(1, 2), memory
+        '''
 
     def generate_square_subsequent_mask(self, sz: int) -> Tensor:
         r"""Generate a square mask for the sequence. The masked positions are filled with float('-inf').
