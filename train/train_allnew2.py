@@ -366,7 +366,7 @@ if __name__ == '__main__':
     if not os.path.exists("SaveModelCKPT"):
         os.makedirs("SaveModelCKPT")
 
-    print("!!210511!!><")
+    print("!!210512!!><")
     print("!!!!!This is train_allnew2.py!!!!!")
     train()
 

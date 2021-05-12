@@ -482,7 +482,8 @@ class DETR_KPnDesc(nn.Module):
         self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 4)
         self.linear_class_desc = MLP(hidden_dim, hidden_dim, 256, 3)
 
-        self.get_answer = torch.nn.Linear(nheads * num_voters, num_voters)
+        #self.get_answer = torch.nn.Linear(nheads * num_voters, num_voters)
+        self.get_answer = torch.nn.Linear(nheads, 1)
 
         #self.linear_class_kp = torch.nn.Linear(256, 2)
         #torch.nn.init.xavier_normal_(self.linear_class_kp.weight)
@@ -518,16 +519,10 @@ class DETR_KPnDesc(nn.Module):
         #input = encoder_input.permute(2, 0, 1)
 
         h_kp = self.transformer(src=src, query_embed=self.query_embed.weight)[0]
-        hh_kp = torch.mean(h_kp, dim=1)
-
-        #hh_kp = h_kp.permute(1, 0, 2)
-        #tmp_1 = hh_kp.unsqueeze(3).unsqueeze(4)
-        #n_Rk = Rk.unsqueeze(1)
-        #tmp_2 = (tmp_1 * n_Rk).view(Rk.shape[0], tmp_1.shape[1], tmp_1.shape[2], -1)
-        #KPnDesc = tmp_2.mean(dim=3)
+        #hh_kp = torch.mean(h_kp, dim=1)
 
         #myKP = self.linear_class_kp(KPnDesc)
-        myKP = self.linear_class_kp(hh_kp)
+        myKP = self.linear_class_kp(h_kp)
         #kp = myKP.sigmoid()
         multi_kp = torch.cat([myKP[0], myKP[1], myKP[2], myKP[3]], dim=0)
         final_kp = self.get_answer(multi_kp.permute(1, 0)).permute(1, 0).sigmoid()
@@ -536,7 +531,7 @@ class DETR_KPnDesc(nn.Module):
         #h_desc = h_kp.permute(1, 0, 2)
 
         #myDesc = self.linear_class_desc(KPnDesc)
-        myDesc = self.linear_class_desc(hh_kp)
+        myDesc = self.linear_class_desc(h_kp)
         multi_desc = torch.cat([myDesc[0], myDesc[1], myDesc[2], myDesc[3]], dim=0)
         #desc = 1 / (1 + torch.exp(-1 * myDesc))
         desc = self.get_answer(multi_desc.permute(1, 0)).permute(1, 0)
