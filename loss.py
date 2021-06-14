@@ -28,15 +28,15 @@ class loss_concentration(nn.Module):
         return self.conc_loss
 
 class loss_separation(nn.Module):
-    def __init__(self, keypoints):
+    def __init__(self):
         super(loss_separation, self).__init__()
+
+    def forward(self, keypoints):
         sep_loss = 0
         kp_sz_0, num_of_kp, _ = keypoints.shape
-        self. scale_param = 0.0001#1e-9
         keypoints = keypoints.float()
 
         for i in range(num_of_kp):
-            #cur_loss = F.mse_loss(keypoints[:, i, :].unsqueeze(1), keypoints, reduction='sum')
             cur_loss = F.mse_loss(keypoints[:, i, :].unsqueeze(1), keypoints)
             sep_loss = sep_loss + cur_loss
 
@@ -46,21 +46,12 @@ class loss_separation(nn.Module):
         #self.sep_loss_output = (1+torch.tanh(1e-2 * sep_loss))*(1-torch.tanh(1e-2 * sep_loss))
 
         #self.sep_loss_output = 2*(1-torch.sigmoid(1e-4*sep_loss))
-        #self.sep_loss_output = 4*torch.sigmoid(1e-4*sep_loss)*(1-torch.sigmoid(1e-4*sep_loss))
-        #self.sep_loss_output = 4 * torch.sigmoid(1e-5 * sep_loss) * (1 - torch.sigmoid(1e-5 * sep_loss))
-        #self.sep_loss_output = 4 * torch.sigmoid(0.5 * 1e-6 * sep_loss) * (1 - torch.sigmoid(0.5 * 1e-6 * sep_loss))
-        #self.sep_loss_output = 4 * torch.sigmoid(1e-7 * sep_loss) * (1 - torch.sigmoid(1e-7 * sep_loss))
-        #self.sep_loss_output = 4 * torch.sigmoid(1e-8 * sep_loss) * (1 - torch.sigmoid(1e-8 * sep_loss))
         #self.sep_loss_output = 4 * torch.sigmoid(1e-6 * sep_loss) * (1 - torch.sigmoid(1e-6 * sep_loss))
-        #self.sep_loss_output = 10 * speed_sigmoid(1e-2*sep_loss) * (1 - speed_sigmoid(1e-2*sep_loss))
-        #self.sep_loss_output = torch.exp(-0.00001*sep_loss)
-        #self.sep_loss_output = torch.exp(-1e-5*sep_loss)
-        self.sep_loss_output = torch.exp(-5e-7*sep_loss)
-        #self.sep_loss_output = 4 * torch.sigmoid(1e-9 * sep_loss) * (1 - torch.sigmoid(1e-9 * sep_loss))
+        #sep_loss_output = torch.exp(-5*1e-5*sep_loss)
+        sep_loss_output = torch.exp(-1e-6*sep_loss)
         #self.sep_loss_output = 4 * torch.sigmoid(1e-9 * sep_loss) * (1 - torch.sigmoid(1e-9 * sep_loss))
 
-    def forward(self):
-        return self.sep_loss_output
+        return sep_loss_output
 
 class loss_transformation(nn.Module):
     def __init__(self, theta, keypoints, tf_keypoints, cur_batch, num_of_kp, my_width, my_height):
@@ -138,21 +129,17 @@ class loss_transformation_3kp(nn.Module):
         return self.transf_loss
 
 class loss_cosim(nn.Module):
-    def __init__(self, DetectionMap, tf_DetectionMap):
+    def __init__(self):
         super(loss_cosim, self).__init__()
+
+    def forward(self, DetectionMap, tf_DetectionMap):
+
         cosim = torch.nn.CosineSimilarity(dim=0, eps=1e-8)
-
-        #self.cosim_loss = torch.exp(1e-4 * torch.sum(cosim(DetectionMap, tf_DetectionMap)))
-        #self.cosim_loss = (torch.mean(torch.sum(cosim(DetectionMap, tf_DetectionMap), dim=1)) ** 0.5)
-        #self.cosim_loss = 1 - torch.sigmoid(torch.mean(cosim(DetectionMap, tf_DetectionMap)))
-        #my_val = torch.mean(cosim(DetectionMap, tf_DetectionMap))
-        #my_val = (cosim(DetectionMap, tf_DetectionMap)).sum()
         my_val = (cosim(DetectionMap, tf_DetectionMap)).mean()
-        #self.cosim_loss = 1 - ((1-torch.tanh(1e-6 * my_val)) * (1+torch.tanh(1e-6 * my_val)))
-        self.cosim_loss = torch.exp(-1.0 * my_val)
+        cosim_loss = torch.exp(-1.0 * my_val)
 
-    def forward(self):
-        return self.cosim_loss
+        return cosim_loss
+
 
 class loss_matching(nn.Module):
     def __init__(self, theta, my_feature, my_tf_feature, cur_batch, num_of_kp, my_width, my_height):
@@ -399,9 +386,39 @@ class HungarianMatcher(nn.Module):
 
         predicted_tf_kp = my_tf_kp
         cal_tf_kp = o_tf_keypoints
+        cost_kp = torch.cdist(predicted_tf_kp.flatten(0, 1), cal_tf_kp.flatten(0, 1), p=1).cuda()
 
-        cost_kp = torch.cdist(predicted_tf_kp.flatten(0, 1), cal_tf_kp.flatten(0, 1), p=2).cuda()
+        '''
+        ##Filter out negative kps
+        flatten_pred_tf = predicted_tf_kp.flatten(0, 1)
+        flatten_cal_tf = cal_tf_kp.flatten(0, 1)
 
+        flatten_desc = my_desc.flatten(0, 1)
+        flatten_tf_desc = my_tf_desc.flatten(0, 1)
+
+        keep_idx =[]
+        for idx in range(num_of_kp * cur_batch):
+                if(flatten_cal_tf[idx, 0] >= 0) and (flatten_cal_tf[idx, 1] >= 0):
+                    keep_idx.append(idx)
+
+        Learned_Cal_tf_kp = torch.zeros(len(keep_idx), 4)
+        Filtered_desc = torch.zeros(len(keep_idx), 512)
+        for iidx in range(len(keep_idx)):
+            Learned_Cal_tf_kp[iidx, 0:2] = flatten_pred_tf[keep_idx[iidx], :]
+            Learned_Cal_tf_kp[iidx, 2:4] = flatten_cal_tf[keep_idx[iidx], :]
+            Filtered_desc[iidx, 0:256] = flatten_desc[keep_idx[iidx], :]
+            Filtered_desc[iidx, 256:512] = flatten_tf_desc[keep_idx[iidx], :]
+
+        filtered_learned_tf_kp = Learned_Cal_tf_kp[:, 0:2]
+        filtered_cal_tf_kp = Learned_Cal_tf_kp[:, 2:4]
+
+        filtered_my_desc = Filtered_desc[:, 0:256]
+        filtered_my_tf_desc = Filtered_desc[:, 256:512]
+
+        #cost_kp = torch.cdist(predicted_tf_kp.flatten(0, 1), cal_tf_kp.flatten(0, 1), p=1).cuda()
+        cost_kp = torch.cdist(filtered_learned_tf_kp, filtered_cal_tf_kp, p=1).cuda()
+        cost_desc = torch.cdist(filtered_my_desc, filtered_my_tf_desc, p=2).cuda()  # p = norm
+        '''
         '''
         pts1 = my_kp.int().detach().cpu().numpy()
         pts2 = my_tf_kp.int().detach().cpu().numpy()
@@ -433,7 +450,7 @@ class HungarianMatcher(nn.Module):
 
         flatten_my_desc = my_desc.flatten(0, 1)
         flatten_my_tf_desc = my_tf_desc.flatten(0, 1)
-        cost_desc = torch.cdist(flatten_my_desc, flatten_my_tf_desc, p=2).cuda()
+        cost_desc = torch.cdist(flatten_my_desc, flatten_my_tf_desc, p=2).cuda() #p = norm
 
         '''
         # We flatten to compute the cost matrices in a batch
@@ -449,17 +466,117 @@ class HungarianMatcher(nn.Module):
 
         # Final cost matrix
         C = self.cost_kp * cost_kp + self.cost_desc * cost_desc
-        #C = self.cost_kp * cost_kp + self.cost_desc * cost_desc
         C = C.view(cur_batch, num_of_kp, -1).cpu()
-
         sizes = num_of_kp
-
         indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-
         match = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
         #return match, cal_tf_kp
         return match
+
+
+
+class HungarianMatcherNLoss(nn.Module):
+    """This class computes an assignment between the targets and the predictions of the network
+    For efficiency reasons, the targets don't include the no_object. Because of this, in general,
+    there are more predictions than targets. In this case, we do a 1-to-1 matching of the best predictions,
+    while the others are un-matched (and thus treated as non-objects).
+    """
+
+    def __init__(self, cost_kp: float = 1, cost_desc: float = 1):
+        super().__init__()
+        self.cost_kp = cost_kp
+        self.cost_desc = cost_desc
+        assert cost_kp != 0 or cost_desc != 0 , "all costs cant be 0"
+
+    @torch.no_grad()
+    def forward(self, theta, my_feature, my_tf_feature, my_width, my_height):
+
+        cur_batch, num_of_kp, _ = my_feature.shape
+
+        my_kp = my_feature[:, :, 0:2]
+        my_tf_kp = my_tf_feature[:, :, 0:2]
+        my_desc = my_feature[:, :, 2:]
+        my_tf_desc = my_tf_feature[:, :, 2:]
+
+        make_transformation = make_transformation_M()
+        my_tfMatrix = make_transformation(theta, 0, 0)
+
+        all_kp = torch.zeros(cur_batch, 4, num_of_kp) #mid = origin
+        all_kp[:, 0, :] = my_kp[:, :, 0] - (0.5 * my_width)
+        all_kp[:, 1, :] = -my_kp[:, :, 1] + (0.5 * my_height)
+        all_kp[:, 3, :] = 1.0
+
+        cal_tf_keypoint = torch.matmul(my_tfMatrix, all_kp) #mid = origin
+        cal_tf_keypoint = torch.round(cal_tf_keypoint).float()
+        cal_tf_keypoint = cal_tf_keypoint[:, 0:2, :] #(b, 2, k)
+
+        get_my_tf_keypoint = cal_tf_keypoint.permute(0, 2, 1).cuda() #mid = origin
+
+        o_tf_keypoints = torch.zeros_like(my_tf_kp) #edge = origin
+        o_tf_keypoints[:, :, 0] = get_my_tf_keypoint[:, :, 0] + (0.5 * my_width)
+        o_tf_keypoints[:, :, 1] = -get_my_tf_keypoint[:, :, 1] + (0.5 * my_height)
+
+        predicted_tf_kp = my_tf_kp #edge = origin
+        cal_tf_kp = o_tf_keypoints #edge = origin
+
+        ##Filter out negative kps
+        flatten_tf = my_kp.flatten(0, 1)
+        flatten_pred_tf = predicted_tf_kp.flatten(0, 1)
+        flatten_cal_tf = cal_tf_kp.flatten(0, 1)
+
+        flatten_desc = my_desc.flatten(0, 1)
+        flatten_tf_desc = my_tf_desc.flatten(0, 1)
+
+        keep_idx = []
+        for idx in range(num_of_kp * cur_batch):
+            if(flatten_cal_tf[idx, 0] >= 0) and (flatten_cal_tf[idx, 1] >= 0):
+                keep_idx.append(idx)
+
+        Learned_Cal_tf_kp = torch.zeros(len(keep_idx), 6)
+        Filtered_desc = torch.zeros(len(keep_idx), 512)
+        for iidx in range(len(keep_idx)):
+            Learned_Cal_tf_kp[iidx, 0:2] = flatten_pred_tf[keep_idx[iidx], :] #edge=origin
+            Learned_Cal_tf_kp[iidx, 2:4] = flatten_cal_tf[keep_idx[iidx], :] #edge=origin
+            Learned_Cal_tf_kp[iidx, 4:6] = flatten_tf[keep_idx[iidx], :] #edge=origin
+            Filtered_desc[iidx, 0:256] = flatten_desc[keep_idx[iidx], :]
+            Filtered_desc[iidx, 256:512] = flatten_tf_desc[keep_idx[iidx], :]
+
+        filtered_learned_tf_kp = Learned_Cal_tf_kp[:, 0:2]
+        filtered_cal_tf_kp = Learned_Cal_tf_kp[:, 2:4]
+        filtered_learned_kp = Learned_Cal_tf_kp[:, 4:6]
+
+        filtered_my_desc = Filtered_desc[:, 0:256]
+        filtered_my_tf_desc = Filtered_desc[:, 256:512]
+
+        #cost_kp = torch.cdist(predicted_tf_kp.flatten(0, 1), cal_tf_kp.flatten(0, 1), p=1).cuda()
+        cost_kp = torch.cdist(filtered_learned_tf_kp, filtered_cal_tf_kp, p=2).cuda()
+        cost_desc = torch.cdist(filtered_my_desc, filtered_my_tf_desc, p=2).cuda()  # p = norm
+
+        # Final cost matrix
+        ratio = cost_kp.sum()/cost_desc.sum()
+        #C = self.cost_kp * cost_kp + self.cost_desc * cost_desc
+        C = 1 * cost_kp + ratio * cost_desc
+        C = C.cpu()
+        indices = linear_sum_assignment(C)
+        match = indices
+
+        ##compute loss with match
+        src_kp = filtered_learned_tf_kp[match[0]] #predicted transformationed kp
+        cal_target_kp = filtered_cal_tf_kp[match[1]] #original predicted kp cal to transformationed kp
+        #target_kp = filtered_learned_kp[match[1]] #original predicted
+
+        loss_kp_match = torch.nn.functional.mse_loss(src_kp.float(), cal_target_kp.float())
+
+        # loss_kp = 10 * loss_fundamental + 1 * loss_kp_match
+
+        src_desc = filtered_my_desc[match[0]]
+        target_desc = filtered_my_tf_desc[match[1]]
+
+        loss_desc = torch.nn.functional.mse_loss(src_desc, target_desc)
+
+        return loss_kp_match, loss_desc
+
 
 class matcher_criterion(nn.Module):
     """ This class computes the loss for DETR.
@@ -469,23 +586,7 @@ class matcher_criterion(nn.Module):
     """
     #def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses):
     def __init__(self):
-        """ Create the criterion.
-        Parameters:
-            num_classes: number of object categories, omitting the special no-object category
-            matcher: module able to compute a matching between targets and proposals
-            weight_dict: dict containing as key the names of the losses and as values their relative weight.
-            eos_coef: relative classification weight applied to the no-object category
-            losses: list of all the losses to be applied. See get_loss for list of available losses.
-        """
         super().__init__()
-        #self.num_classes = num_classes
-        #self.matcher = matcher
-        #self.weight_dict = weight_dict
-        #self.eos_coef = eos_coef
-        #self.losses = losses
-        #empty_weight = torch.ones(self.num_classes + 1)
-        #empty_weight[-1] = self.eos_coef
-        #self.register_buffer('empty_weight', empty_weight)
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -507,6 +608,7 @@ class matcher_criterion(nn.Module):
         src_kp = kp[idx_src]
         target_kp = tf_kp[idx_trg]
 
+        '''
         pts1 = src_kp.int().detach().cpu().numpy()
         pts2 = target_kp.int().detach().cpu().numpy()
 
@@ -526,15 +628,15 @@ class matcher_criterion(nn.Module):
         ppts2[:, 1] = pts2[:, 1]
         ppts2[:, 2] = 1.0
 
-        F = torch.tensor(FundamentalMatrix)
+        FundamentalMatrix_ = torch.tensor(FundamentalMatrix)
 
-        aaa = torch.matmul(ppts1.float(), F.float())
+        aaa = torch.matmul(ppts1.float(), FundamentalMatrix_.float())
         t_ppts2 = ppts2.permute(1, 0)
         bbb = torch.matmul(aaa, t_ppts2.float())
         tmp_result = torch.abs(bbb)
-
+        '''
         #loss_kp = F.mse_loss(src_kp, target_kp)
-        loss_fundamental = torch.trace(tmp_result).cuda()
+        # loss_fundamental = torch.trace(tmp_result).cuda()
         loss_kp_match = torch.nn.functional.mse_loss(src_kp.float(), target_kp.float())
 
         #loss_kp = 10 * loss_fundamental + 1 * loss_kp_match
@@ -544,4 +646,42 @@ class matcher_criterion(nn.Module):
 
         loss_desc = torch.nn.functional.mse_loss(src_desc, target_desc)
 
-        return loss_fundamental, loss_kp_match, loss_desc
+        return loss_kp_match, loss_desc
+
+
+class NCC_loss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def _get_src_permutation_idx(self, indices):
+        # permute predictions following indices
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+        src_idx = torch.cat([src for (src, _) in indices])
+        return batch_idx, src_idx
+
+    def _get_tgt_permutation_idx(self, indices):
+        # permute targets following indices
+        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+        return batch_idx, tgt_idx
+
+    def forward(self, aefe_input, tf_aefe_input, match, kp, tf_kp):
+        idx_src = self._get_src_permutation_idx(match)
+        idx_trg = self._get_tgt_permutation_idx(match)
+
+        src_kp = kp[idx_src]
+        target_kp = tf_kp[idx_trg]
+
+        window_sz = 5
+        u1 = src_kp[:, 0]
+        v1 = src_kp[:, 1]
+        u2 = target_kp[:, 0]
+        v2 = target_kp[:, 1]
+
+        ncc_input_src = aefe_input[:, :, u1-window_sz:u1+window_sz, v1-window_sz:v1+window_sz]
+        ncc_input_trg = tf_aefe_input[:, :, u2-window_sz:u2+window_sz, v2-window_sz:v2+window_sz]
+
+        ncc = (ncc_input_src * ncc_input_trg)/(torch.abs(ncc_input_src)*torch.abs(ncc_input_trg))
+
+        return ncc
+

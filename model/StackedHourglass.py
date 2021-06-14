@@ -18,10 +18,9 @@ class StackedHourglassForKP(nn.Module):
         #self.pre3 = Pool(2, 2)
         #self.pre4 = Residual(128, 128)
         self.pre5 = Residual(128, inp_dim)
-        
-
         '''
         self.pool = Pool(2, 2)
+        #self.final_conv = Conv(256, 256, 7, 2, bn=True, relu=True)
         self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
         self.pre = nn.Sequential(
             #Conv(3, 64, 3, 1, bn=True, relu=True),
@@ -58,26 +57,12 @@ class StackedHourglassForKP(nn.Module):
             Merge(oup_dim, inp_dim) for i in range(nstack - 1)
         ])
 
-        self.backbone = resnet50()
-        del self.backbone.fc
-        #self.conv = nn.Conv2d(2048, 256, 1)
-        #self.conv = nn.Conv2d(64, 256, 1)
-        #self.conv.apply(weights_init)
+        #self.backbone = resnet50()
+        #del self.backbone.fc
 
     def forward(self, imgs):
         x = imgs #(b,3,w,h)
-        '''
-        x = self.pre1(x)
-        #x = self.upsample(x)
-        x = self.pre2(x)
-        #x = self.pre3(x)
-        #x = self.pre4(x)
-        x = self.pre5(x)
-        #x = self.upsample(x)
-        '''
         x = self.pre(x) #(b,192,96,128) #(b, 192, 57, 192)
-        #x = self.pool(x)
-        #x = self.upsample(x)
         combined_hm_preds = []
         append = combined_hm_preds.append
         for i in range(self.nstack):
@@ -90,21 +75,9 @@ class StackedHourglassForKP(nn.Module):
 
         heatmap = torch.stack(combined_hm_preds, 1)[:, self.nstack - 1, :, :, :]
         heatmap = self.pool(heatmap)
-        #out = self.conv(heatmap)
-        '''
-        #out = self.backbone.conv1(heatmap)
-        out = self.backbone.bn1(heatmap)
-        out = self.backbone.relu(out)
-        #out = self.backbone.maxpool(out)
 
-        out = self.backbone.layer1(out)
-        out = self.backbone.layer2(out)
-        out = self.backbone.layer3(out)
-        out = self.backbone.layer4(out)
-        out = self.upsample(out)
-        out = self.conv(out)
-        '''
         return heatmap
+
 
 class StackedHourglassImgRecon(nn.Module):
     def __init__(self, num_of_kp, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):

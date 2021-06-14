@@ -98,8 +98,8 @@ class my_dataset(Dataset):
         #lg dataset(96,128))
 
         #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/Kitti/sequences/00/image_2/*.png'))):
-        #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/Kitti/sequences/05/image_2/*.png'))):
-        for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/Kitti_tmp/sequences/05/image_2/*.png'))):
+        for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/Kitti/sequences/05/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/Kitti_tmp/sequences/05/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./data/*.jpg'))):
         #for filename in (sorted(glob.glob('./Oxford/oxbuild_images/*.jpg'))):
             im = Image.open(filename)
