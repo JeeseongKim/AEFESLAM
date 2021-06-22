@@ -6,7 +6,7 @@ from model.layers import weights_init
 
 from torchvision.models import resnet50
 
-class StackedHourglassForKP(nn.Module):
+class StackedHourglassForKP(torch.nn.Module):
     def __init__(self, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):
         super(StackedHourglassForKP, self).__init__()
 

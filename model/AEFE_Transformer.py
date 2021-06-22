@@ -95,19 +95,19 @@ class Transformer(Module):
             if p.dim() > 1:
                 torch.nn.init.xavier_uniform_(p)
 
-    #def forward(self, src, mask, query_embed, pos_embed):
-    def forward(self, src, query_embed):
+    def forward(self, src, mask, query_embed, pos_embed):
+    #def forward(self, src, query_embed):
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(2, 0, 1)
-        #pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        #mask = mask.flatten(1)
+        mask = mask.flatten(1)
 
         tgt = torch.zeros_like(query_embed)
-        #memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        memory = self.encoder(src)
-        #hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,pos=pos_embed, query_pos=query_embed)
-        hs = self.decoder(tgt, memory, query_pos=query_embed)
+        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+        #memory = self.encoder(src)
+        hs = self.decoder(tgt, memory, memory_key_padding_mask=mask, pos=pos_embed, query_pos=query_embed)
+        #hs = self.decoder(tgt, memory, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
@@ -125,14 +125,6 @@ class Transformer(Module):
         #return memory, output_1, output_2
         return output_1.transpose(1, 2), memory
         '''
-
-    def generate_square_subsequent_mask(self, sz: int) -> Tensor:
-        r"""Generate a square mask for the sequence. The masked positions are filled with float('-inf').
-            Unmasked positions are filled with float(0.0).
-        """
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
 
 
 

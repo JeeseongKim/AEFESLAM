@@ -4,11 +4,12 @@ import copy
 from typing import Optional, List
 
 from torch import nn, Tensor
-from position_encoding import *
+from model.position_encoding import *
 from model.layers import weights_init
 
-from model.AEFE_Transformer import *
-from utils import *
+#from model.AEFE_Transformer import *
+from model.DETR_transformer import *
+from model.utils import *
 
 class PositionEmbeddingSine(nn.Module):
     """
@@ -27,6 +28,7 @@ class PositionEmbeddingSine(nn.Module):
         self.scale = scale
 
     def forward(self, x, mask):
+        x = x
         assert mask is not None
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
@@ -470,16 +472,16 @@ class DETR_KPnDesc(nn.Module):
         super(DETR_KPnDesc, self).__init__()
         self.nheads = nheads
         #Transformer
-        self.transformer = Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, return_intermediate_dec=False)
+        self.transformer = Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, return_intermediate_dec=True)
         #self.transformer.apply(weights_init)
         self.query_embed = nn.Embedding(num_voters, hidden_dim)
         #torch.nn.init.xavier_normal_(self.query_embed.weight)
 
-        #self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
-        self.linear_class_kp_1 = nn.Linear(hidden_dim, 128)
-        self.linear_class_kp_2 = nn.Linear(128, 64)
-        self.linear_class_kp_3 = nn.Linear(64, 16)
-        self.linear_class_kp_4 = nn.Linear(16, 2)
+        self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
+        #self.linear_class_kp_1 = nn.Linear(hidden_dim, 128)
+        #self.linear_class_kp_2 = nn.Linear(128, 64)
+        #self.linear_class_kp_3 = nn.Linear(64, 16)
+        #self.linear_class_kp_4 = nn.Linear(16, 2)
 
         self.linear_class_desc = nn.Linear(hidden_dim, 256)
 
@@ -503,8 +505,10 @@ class DETR_KPnDesc(nn.Module):
 
         #self.kp_attention = MHAttentionMap(hidden_dim, hidden_dim, nheads, dropout=0.0)
         #self.kp_head = MaskHeadSmallConv(hidden_dim + nheads, [256, 256, 256], hidden_dim)
+    def MySigmoid(self, x):
+        return torch.exp(x)/(torch.exp(x)+1)
 
-    def forward(self, src):
+    def forward(self, src, mask, pos):
         #cur_batch = encoder_input.shape[0]
         ##trg_tmp = self.query_pos.weight
         ##trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
@@ -514,13 +518,18 @@ class DETR_KPnDesc(nn.Module):
         #trg = torch.zeros_like(query_embed)
         #input = encoder_input.permute(2, 0, 1)
         #hs, memory = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight)
-        hs = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight)[0]
+        #hs = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight)[0]
+        #hs = self.transformer(src=self.input_proj(src), mask=mask, query_embed=self.query_embed.weight, pos_embed=pos[-1])[0]
+        #hs = self.transformer(src=self.input_proj(src), mask=mask, query_embed=self.query_embed.weight, pos_embed=pos)[0]
+        hs = self.transformer(src=self.input_proj(src),query_embed=self.query_embed.weight, pos_embed=pos)[0]
 
         #myKP = self.linear_class_kp(hs).sigmoid()
-        hs_1 = self.linear_class_kp_1(hs)
-        hs_2 = self.linear_class_kp_2(hs_1)
-        hs_3 = self.linear_class_kp_3(hs_2)
-        myKP = self.linear_class_kp_4(hs_3).sigmoid()
+        myKP = self.MySigmoid(self.linear_class_kp(hs))
+
+        #hs_1 = self.linear_class_kp_1(hs)
+        #hs_2 = self.linear_class_kp_2(hs_1)
+        #hs_3 = self.linear_class_kp_3(hs_2)
+        #myKP = self.linear_class_kp_4(hs_3).sigmoid()
 
         #myKP = self.linear_class_kp(hs)
         #multi_kp = torch.cat([myKP[0], myKP[1], myKP[2], myKP[3]], dim=0)
@@ -547,7 +556,7 @@ class DETR_KPnDesc(nn.Module):
         '''
 
         #return final_kp, final_desc
-        return myKP, myDesc
+        return myKP[-1], myDesc[-1]
 
 
 class MHAttentionMap(nn.Module):
