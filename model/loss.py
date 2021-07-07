@@ -491,6 +491,18 @@ class HungarianMatcherNLoss(nn.Module):
         self.cost_desc = cost_desc
         assert cost_kp != 0 or cost_desc != 0 , "all costs cant be 0"
 
+    def _get_src_permutation_idx(self, indices):
+        # permute predictions following indices
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+        src_idx = torch.cat([src for (src, _) in indices])
+        return batch_idx, src_idx
+
+    def _get_tgt_permutation_idx(self, indices):
+        # permute targets following indices
+        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+        return batch_idx, tgt_idx
+
     @torch.no_grad()
     def forward(self, theta, my_feature, my_tf_feature, my_width, my_height):
 
@@ -534,50 +546,72 @@ class HungarianMatcherNLoss(nn.Module):
         for idx in range(num_of_kp * cur_batch):
             if(flatten_cal_tf[idx, 0] >= 0) and (flatten_cal_tf[idx, 1] >= 0):
                 keep_idx.append(idx)
-
-        Learned_Cal_tf_kp = torch.zeros(len(keep_idx), 6)
+        
+        Learned_Cal_tf_kp = torch.zeros(len(keep_idx), 4)
         Filtered_desc = torch.zeros(len(keep_idx), 512)
         for iidx in range(len(keep_idx)):
             Learned_Cal_tf_kp[iidx, 0:2] = flatten_pred_tf[keep_idx[iidx], :] #edge=origin
             Learned_Cal_tf_kp[iidx, 2:4] = flatten_cal_tf[keep_idx[iidx], :] #edge=origin
-            Learned_Cal_tf_kp[iidx, 4:6] = flatten_tf[keep_idx[iidx], :] #edge=origin
+            #Learned_Cal_tf_kp[iidx, 4:6] = flatten_tf[keep_idx[iidx], :] #edge=origin
             Filtered_desc[iidx, 0:256] = flatten_desc[keep_idx[iidx], :]
             Filtered_desc[iidx, 256:512] = flatten_tf_desc[keep_idx[iidx], :]
 
+        '''
+        Learned_Cal_tf_kp = torch.zeros(len(flatten_cal_tf), 4)
+        Learned_Cal_tf_kp[:, 0:2] = flatten_pred_tf
+        Learned_Cal_tf_kp[:, 2:4] = flatten_cal_tf
+        '''
         filtered_learned_tf_kp = Learned_Cal_tf_kp[:, 0:2]
         filtered_cal_tf_kp = Learned_Cal_tf_kp[:, 2:4]
-        filtered_learned_kp = Learned_Cal_tf_kp[:, 4:6]
+        #filtered_learned_kp = Learned_Cal_tf_kp[:, 4:6]
 
         filtered_my_desc = Filtered_desc[:, 0:256]
         filtered_my_tf_desc = Filtered_desc[:, 256:512]
 
         #cost_kp = torch.cdist(predicted_tf_kp.flatten(0, 1), cal_tf_kp.flatten(0, 1), p=1).cuda()
-        cost_kp = torch.cdist(filtered_learned_tf_kp, filtered_cal_tf_kp, p=2).cuda()
-        cost_desc = torch.cdist(filtered_my_desc, filtered_my_tf_desc, p=2).cuda()  # p = norm
+        #cost_kp = torch.cdist(filtered_learned_tf_kp, filtered_cal_tf_kp, p=2).cuda()
+        #cost_desc = torch.cdist(filtered_my_desc, filtered_my_tf_desc, p=2).cuda()  # p = norm
+        cost_kp = torch.cdist(filtered_learned_tf_kp, filtered_cal_tf_kp, p=1).cuda()
+        cost_desc = torch.cdist(filtered_my_desc, filtered_my_tf_desc, p=1).cuda()  # p = norm
 
         # Final cost matrix
         ratio = cost_kp.sum()/cost_desc.sum()
         #C = self.cost_kp * cost_kp + self.cost_desc * cost_desc
         C = 1 * cost_kp + ratio * cost_desc
+        #C = cost_kp
         C = C.cpu()
         indices = linear_sum_assignment(C)
         match = indices
 
+        MyCost = C[match[0], match[1]].sum().cuda()
+        #src_idx = self._get_src_permutation_idx(indices)
+        #tgt_idx = self._get_tgt_permutation_idx(indices)
+
         ##compute loss with match
         src_kp = filtered_learned_tf_kp[match[0]] #predicted transformationed kp
         cal_target_kp = filtered_cal_tf_kp[match[1]] #original predicted kp cal to transformationed kp
+        #src_kp = filtered_learned_tf_kp[match[1]] #predicted transformationed kp
+        #cal_target_kp = filtered_cal_tf_kp[match[0]] #original predicted kp cal to transformationed kp
         #target_kp = filtered_learned_kp[match[1]] #original predicted
 
-        loss_kp_match = torch.nn.functional.mse_loss(src_kp.float(), cal_target_kp.float())
+        #loss_kp = torch.nn.functional.mse_loss(src_kp.float(), cal_target_kp.float())
+        loss_kp_match = F.l1_loss(src_kp.float(), cal_target_kp.float(), reduction='none')
+        loss_kp = loss_kp_match.sum()/len(keep_idx)
+        #loss_kp_match = torch.cdist(src_kp.float(), cal_target_kp.float(), p=2)
 
         # loss_kp = 10 * loss_fundamental + 1 * loss_kp_match
 
         src_desc = filtered_my_desc[match[0]]
         target_desc = filtered_my_tf_desc[match[1]]
+        #src_desc = filtered_my_desc[match[1]]
+        #target_desc = filtered_my_tf_desc[match[0]]
 
-        loss_desc = torch.nn.functional.mse_loss(src_desc, target_desc)
+        loss_desc_match = F.l1_loss(src_desc.float(), target_desc.float(), reduction='none')
+        loss_desc = loss_desc_match.sum() / len(keep_idx)
+        #loss_desc = torch.nn.functional.mse_loss(src_desc, target_desc)
 
-        return loss_kp_match, loss_desc
+        #return loss_kp_match, loss_desc
+        return loss_kp, loss_desc, MyCost
 
 
 class matcher_criterion(nn.Module):

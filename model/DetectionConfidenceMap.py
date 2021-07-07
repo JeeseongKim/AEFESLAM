@@ -10,7 +10,7 @@ from model.DETR_origin import *
 
 import torch.nn.functional as F
 import math
-from GenHeatmap import *
+from model.GenHeatmap import *
 from torchvision.models import resnet50
 
 def dev_sigmoid_100(x):

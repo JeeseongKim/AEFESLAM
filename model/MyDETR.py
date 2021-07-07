@@ -10,6 +10,7 @@ from model.layers import weights_init
 #from model.AEFE_Transformer import *
 from model.DETR_transformer import *
 from model.utils import *
+from model.dcn import DeformableConv2d
 
 class PositionEmbeddingSine(nn.Module):
     """
@@ -478,17 +479,11 @@ class DETR_KPnDesc(nn.Module):
         #torch.nn.init.xavier_normal_(self.query_embed.weight)
 
         self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
-        #self.linear_class_kp_1 = nn.Linear(hidden_dim, 128)
-        #self.linear_class_kp_2 = nn.Linear(128, 64)
-        #self.linear_class_kp_3 = nn.Linear(64, 16)
-        #self.linear_class_kp_4 = nn.Linear(16, 2)
 
         self.linear_class_desc = nn.Linear(hidden_dim, 256)
 
-
         self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1)
-        self.get_answer = torch.nn.Linear(num_decoder_layers, 1)
-        #self.get_answer_kp = torch.nn.Linear(num_decoder_layers, 1)
+        #self.input_proj = DeformableConv2d(256, hidden_dim, kernel_size=1)
         #self.get_answer_desc = torch.nn.Linear(nheads, 1)
 
         #self.linear_class_kp = torch.nn.Linear(256, 2)
@@ -508,23 +503,11 @@ class DETR_KPnDesc(nn.Module):
     def MySigmoid(self, x):
         return torch.exp(x)/(torch.exp(x)+1)
 
-    def forward(self, src, mask, pos):
-        #cur_batch = encoder_input.shape[0]
-        ##trg_tmp = self.query_pos.weight
-        ##trg = trg_tmp.unsqueeze(1).repeat(1, cur_batch, 1)
-        #query_embed = self.query_pos.weight
-        #query_embed = query_embed.unsqueeze(1).repeat(1, cur_batch, 1)
+    def forward(self, src, pos):
+        hs = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight, pos_embed=pos)[0]
 
-        #trg = torch.zeros_like(query_embed)
-        #input = encoder_input.permute(2, 0, 1)
-        #hs, memory = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight)
-        #hs = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight)[0]
-        #hs = self.transformer(src=self.input_proj(src), mask=mask, query_embed=self.query_embed.weight, pos_embed=pos[-1])[0]
-        #hs = self.transformer(src=self.input_proj(src), mask=mask, query_embed=self.query_embed.weight, pos_embed=pos)[0]
-        hs = self.transformer(src=self.input_proj(src),query_embed=self.query_embed.weight, pos_embed=pos)[0]
-
-        #myKP = self.linear_class_kp(hs).sigmoid()
-        myKP = self.MySigmoid(self.linear_class_kp(hs))
+        #myKP = self.MySigmoid(self.linear_class_kp(hs))
+        myKP = self.linear_class_kp(hs).sigmoid()
 
         #hs_1 = self.linear_class_kp_1(hs)
         #hs_2 = self.linear_class_kp_2(hs_1)
@@ -556,6 +539,28 @@ class DETR_KPnDesc(nn.Module):
         '''
 
         #return final_kp, final_desc
+        return myKP[-1], myDesc[-1]
+
+class DETR_KPnDesc_only(nn.Module):
+    def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+        super(DETR_KPnDesc_only, self).__init__()
+        self.nheads = nheads
+
+        #Transformer
+        self.transformer = Transformer_only(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, return_intermediate_dec=True)
+        self.query_embed = nn.Embedding(num_voters, hidden_dim)
+        self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.linear_class_desc = nn.Linear(hidden_dim, 256)
+        self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1)
+
+    def MySigmoid(self, x):
+        return torch.exp(x)/(torch.exp(x)+1)
+
+    def forward(self, src):
+        hs = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight)[0]
+        myKP = self.linear_class_kp(hs).sigmoid()
+        myDesc = torch.tanh(self.linear_class_desc(hs))
+
         return myKP[-1], myDesc[-1]
 
 

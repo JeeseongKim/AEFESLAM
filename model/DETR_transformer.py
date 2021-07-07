@@ -13,6 +13,42 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
+class Transformer_only(nn.Module):
+
+    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+                 num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
+                 activation="relu", normalize_before=False,
+                 return_intermediate_dec=False):
+        super().__init__()
+
+        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
+        encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
+        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+
+        decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation, normalize_before)
+        decoder_norm = nn.LayerNorm(d_model)
+        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm, return_intermediate=return_intermediate_dec)
+
+        self._reset_parameters()
+
+        self.d_model = d_model
+        self.nhead = nhead
+
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+    def forward(self, src, query_embed):
+        # flatten NxCxHxW to HWxNxC
+        bs, c, h, w = src.shape
+        src = src.flatten(2).permute(2, 0, 1)
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+
+        tgt = torch.zeros_like(query_embed)
+        memory = self.encoder(src, src_key_padding_mask=None, pos=None)
+        hs = self.decoder(tgt, memory, memory_key_padding_mask=None, pos=None, query_pos=query_embed)
+        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
 
 class Transformer(nn.Module):
 
@@ -158,6 +194,7 @@ class TransformerEncoderLayer(nn.Module):
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src = src + self.dropout2(src2)
         src = self.norm2(src)
+
         return src
 
     def forward_pre(self, src,

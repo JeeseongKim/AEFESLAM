@@ -59,20 +59,16 @@ class my_dataset_originalImg(Dataset):
         self.input_width = my_width
         #lg dataset(96,128))
 
-        #for filename in (sorted(glob.glob('./Kitti/sequences/00/image_2/*.png'))):
-        for filename in (sorted(glob.glob('./Kitti/sequences/05/image_2/*.png'))):
-        #for filename in (sorted(glob.glob('./Kitti_tmp/sequences/05/image_2/*.png'))):
-        #for filename in (sorted(glob.glob('./data/*.jpg'))):
+        #for filename in (sorted(glob.glob('./dataset/Kitti/sequences/00/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('./dataset/Kitti/sequences/05/image_2/*.png'))):
+        for filename in (sorted(glob.glob('./dataset/Kitti/oxbuild_images/*.jpg'))):
+        #for filename in (sorted(glob.glob('./dataset/Kitti_tmp/sequences/05/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('./dataset/LG/*.jpg'))):
             im = Image.open(filename)
 
             img_rsz = cv2.resize(np.array(im), (self.input_width, self.input_height)) #opencv image: (h,w,C), tensor image: (c, h, w)
             img_tensor_input = transforms.ToTensor()(img_rsz)# (3,192,256)
             self.dataset_img.append(img_tensor_input)
-
-            #img_rsz_fn = torchvision.transforms.Resize((my_height, my_width), 2)
-            #img_rsz = img_rsz_fn(im)
-            #img_rsz = transforms.ToTensor()(img_rsz)
-            #self.dataset_img.append(img_rsz)
 
             #self.dataset_filename.append(filename.split('.')[1].split('/')[2])
             self.dataset_filename.append(filename.split('/')[5].split('.')[0])
@@ -99,26 +95,22 @@ class my_dataset(Dataset):
 
         #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/Kitti/sequences/00/image_2/*.png'))):
         #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/Kitti/sequences/05/image_2/*.png'))):
-        for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/Kitti_tmp/sequences/05/image_2/*.png'))):
+        #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/Kitti_tmp/sequences/05/image_2/*.png'))):
         #for filename in (sorted(glob.glob('./data/*.jpg'))):
-        #for filename in (sorted(glob.glob('./Oxford/oxbuild_images/*.jpg'))):
+        #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_images/*.jpg'))):
+        #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_tmp/*.jpg'))):
+        for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_part/*.jpg'))):
             im = Image.open(filename)
+            if(im.height < im.width):
+                img_rsz = cv2.resize(np.array(im), (self.input_width, self.input_height)) #opencv image: (h,w,C), tensor image: (c, h, w)
+                img_tensor_input = transforms.ToTensor()(img_rsz)# (3,192,256)
+                self.dataset_img.append(img_tensor_input)
 
-            img_rsz = cv2.resize(np.array(im), (self.input_width, self.input_height)) #opencv image: (h,w,C), tensor image: (c, h, w)
-            img_tensor_input = transforms.ToTensor()(img_rsz)# (3,192,256)
-            self.dataset_img.append(img_tensor_input)
+                #self.dataset_filename.append(filename.split('/')[8].split('.')[0])  # KITTI
+                self.dataset_filename.append(filename.split('/')[6].split('.')[0])  # oxford
 
-            #img_rsz_fn = torchvision.transforms.Resize((my_height, my_width), 2)
-            #img_rsz = img_rsz_fn(im)
-            #img_rsz = transforms.ToTensor()(img_rsz)
-            #self.dataset_img.append(img_rsz)
-
-            #self.dataset_filename.append(filename.split('.')[1].split('/')[2])
-            #self.dataset_filename.append(filename.split('/')[5].split('.')[0]) #KITTI
-            self.dataset_filename.append(filename.split('/')[8].split('.')[0])  # KITTI
-
-            #self.dataset_filename.append(filename.split('/')[3]) #oxfor building
-            self.kp_img.append(img_rsz)
+                #self.dataset_filename.append(filename.split('/')[3]) #oxfor building
+                self.kp_img.append(img_rsz)
 
         self.len = len(self.dataset_img)
         a = torch.utils.data.get_worker_info()

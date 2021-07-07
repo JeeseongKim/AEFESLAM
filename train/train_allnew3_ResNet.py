@@ -17,6 +17,7 @@ from model.DetectionConfidenceMap import *
 from model.DETR_transformer import *
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.multiprocessing as mp
+import model.DETR_backbone import *
 
 torch.multiprocessing.set_start_method('spawn', force=True)
 
@@ -83,11 +84,10 @@ def generate_square_subsequent_mask(height, width):
 
 def train():
     model_start = time.time()
-    # model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=256, oup_dim=256, bn=False, increase=0).cuda()
-    model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=128, oup_dim=256, bn=False, increase=0).cuda()
-    #model_StackedHourglassForKP = StackedHourglassForKP_DCN(nstack=num_nstack, inp_dim=128, oup_dim=256, bn=False, increase=0).cuda()
-    model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
-    optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    model_FeatureMap = ResNetBackbone(hidden_dim=256).cuda()
+    model_FeatureMap = nn.DataParallel(model_FeatureMap).cuda()
+    optimizer_FeatureMap = torch.optim.AdamW(model_FeatureMap.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     #model_DETR_kp = DETR_KPnDesc(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
     model_DETR_kp = DETR_KPnDesc_only(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
@@ -444,15 +444,9 @@ if __name__ == '__main__':
         os.makedirs("SavetfKPImg")
     if not os.path.exists("SaveReconstructedImg"):
         os.makedirs("SaveReconstructedImg")
-    #if not os.path.exists("SaveTFReconstructedImg"):
-    #    os.makedirs("SaveTFReconstructedImg")
-    #if not os.path.exists("SaveHeatMapImg"):
-    #    os.makedirs("SaveHeatMapImg")
-    #if not os.path.exists("SaveModelCKPT"):
-    #    os.makedirs("SaveModelCKPT")
 
-    print("!!210706!!")
-    print("!!!!!This is train_allnew2.py!!!!!")
+    print("!!210707!!")
+    print("!!!!!This is train_allnew3 with ResNet Module.py!!!!!")
     train()
 
 ##########################################################################################################################

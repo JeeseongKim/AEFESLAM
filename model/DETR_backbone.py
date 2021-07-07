@@ -7,10 +7,10 @@ from torch import nn
 from torchvision.models._utils import IntermediateLayerGetter
 from typing import Dict, List
 
-from misc import NestedTensor, is_main_process
+from model.misc import NestedTensor, is_main_process
 
-from position_encoding import build_position_encoding
-
+from model.position_encoding import build_position_encoding
+from torchvision.models import resnet50
 
 class FrozenBatchNorm2d(torch.nn.Module):
     """
@@ -109,3 +109,29 @@ def build_backbone(hidden_dim):
     model = Joiner(backbone, position_embedding)
     model.num_channels = backbone.num_channels
     return model
+
+
+class ResNetBackbone(torch.nn.Module):
+    def __init__(self, hidden_dim=256):
+        super(ResNetBackbone, self).__init__()
+        self.backbone = resnet50()
+        del self.backbone.fc
+        self.conv = nn.Conv2d(2048, hidden_dim, 1)
+
+    def forward(self, imgs):
+        x = imgs #(b,3,w,h)
+
+        x = self.backbone.conv1(x)
+        x = self.backbone.bn1(x)
+        x = self.backbone.relu(x)
+        x = self.backbone.maxpool(x)
+
+        x = self.backbone.layer1(x)
+        x = self.backbone.layer2(x)
+        x = self.backbone.layer3(x)
+        x = self.backbone.layer4(x)
+
+        # convert from 2048 to 256 feature planes for the transformer
+        h = self.conv(x)
+
+        return h

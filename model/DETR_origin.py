@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from misc import *
+from model.misc import *
 from model.DETR_backbone import build_backbone
 #from model.transformer import build_transformer
 
