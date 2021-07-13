@@ -59,7 +59,7 @@ my_height = 128 #224
 input_width = my_width
 
 num_epochs = 500
-batch_size = 1 #4  # 8 #4
+batch_size = 2  # 8 #4
 
 stacked_hourglass_inpdim_kp = input_width
 # stacked_hourglass_oupdim_kp = num_of_kp  # number of my keypoints
@@ -83,17 +83,23 @@ def generate_square_subsequent_mask(height, width):
 
 def train():
     model_start = time.time()
-    # model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=256, oup_dim=256, bn=False, increase=0).cuda()
-    model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=128, oup_dim=256, bn=False, increase=0).cuda()
+    #model_StackedHourglassForKP = StackedHourglassForKP(nstack=6, inp_dim=256, oup_dim=64, bn=False, increase=0).cuda()
+    model_StackedHourglassForKP = ResNetBackbone(hidden_dim=64).cuda()
+    #model_StackedHourglassForKP = StackedHourglassForKP_1(nstack=num_nstack, inp_dim=256, oup_dim=64, bn=False, increase=0).cuda()
+    #model_StackedHourglassForKP = StackedHourglassForKP(nstack=num_nstack, inp_dim=128, oup_dim=256, bn=False, increase=0).cuda()
     #model_StackedHourglassForKP = StackedHourglassForKP_DCN(nstack=num_nstack, inp_dim=128, oup_dim=256, bn=False, increase=0).cuda()
     model_StackedHourglassForKP = nn.DataParallel(model_StackedHourglassForKP).cuda()
-    optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_StackedHourglass_kp = torch.optim.AdamW(model_StackedHourglassForKP.parameters(), lr=1e-6, weight_decay=weight_decay)
+    optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_StackedHourglass_kp = torch.optim.Adam(model_StackedHourglassForKP.parameters(), lr=1e-5, weight_decay=1e-6)
+    #optimizer_StackedHourglass_kp = torch.optim.SGD(model_StackedHourglassForKP.parameters(), lr=1e-4, momentum=0.9)
 
     #model_DETR_kp = DETR_KPnDesc(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
-    model_DETR_kp = DETR_KPnDesc_only(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=4, num_decoder_layers=4).cuda()
+    model_DETR_kp = DETR_KPnDesc_only(num_voters=voters, hidden_dim=256, nheads=4, num_encoder_layers=6, num_decoder_layers=6).cuda()
     #model_DETR_kp = DETR_KPnDesc(num_voters=voters, hidden_dim=256, nheads=2, num_encoder_layers=4, num_decoder_layers=4).cuda()
     model_DETR_kp = nn.DataParallel(model_DETR_kp).cuda()
     optimizer_DETR_kp = torch.optim.AdamW(model_DETR_kp.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer_DETR_kp = torch.optim.SGD(model_DETR_kp.parameters(), lr=1e-6, momentum=0.9)
 
     #model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=256, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0)
     model_StackedHourglassImgRecon = StackedHourglassImgRecon_DETR(input_channel=1280, nstack=num_nstack, inp_dim=128, oup_dim=3, bn=False, increase=0).cuda() #kitti
@@ -109,7 +115,9 @@ def train():
     ###################################################################################################################
 
     # call checkpoint
-    MyCKPT = "/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model.pth"
+    MyCKPT = "/home/jsk/AEFE_SLAM/SaveModelCKPT/rrandom.pth"
+    #MyCKPT = "/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model_onlySep.pth"
+    #MyCKPT = "/home/jsk/AEFE_SLAM/SaveModelCKPT/210713_debug.pth"
     #if os.path.exists("/home/jsk/AEFE_SLAM/SaveModelCKPT/noMatchingLoss.pth"):
     if os.path.exists(MyCKPT):
         print("-----Loading Checkpoint-----")
@@ -143,7 +151,8 @@ def train():
 
     if os.path.exists(MyCKPT):
         print("!!")
-        start_epoch = save_epoch+1
+        #start_epoch = save_epoch+1
+        start_epoch = 0
         print("start_epoch: ", start_epoch)
     else:
         start_epoch = 0
@@ -169,6 +178,8 @@ def train():
             input_img, cur_filename, kp_img = data
             aefe_input = input_img.cuda()  # (b, 3, height, width)
 
+            theta = 0
+            '''
             if(epoch < 5):
                 theta = 0
             elif (epoch >= 5) and (epoch < 15):
@@ -198,6 +209,8 @@ def train():
             elif (epoch >= 400):
                 theta = random.uniform(-3, 3)
             '''
+
+            '''
             elif (epoch >= 5) and (epoch < 250):
                 theta = random.uniform(-1, 1)
             elif (epoch >= 250) and (epoch < 500):
@@ -224,12 +237,12 @@ def train():
             Rk_origin = model_StackedHourglassForKP(aefe_input)
             tf_Rk_origin = model_StackedHourglassForKP(tf_aefe_input)
 
-            pool4 = torch.nn.AvgPool2d(2, stride=4)
-            pool_aefe = pool4(aefe_input)
-            pool_tf_aefe = pool4(tf_aefe_input)
+            #pool4 = torch.nn.AvgPool2d(2, stride=4)
+            #pool_aefe = pool4(aefe_input)
+            #pool_tf_aefe = pool4(tf_aefe_input)
 
-            Rk = (pool_aefe.unsqueeze(1) * Rk_origin.unsqueeze(2)).mean(dim=2)
-            tf_Rk = (pool_tf_aefe.unsqueeze(1) * tf_Rk_origin.unsqueeze(2)).mean(dim=2)
+            #Rk = (pool_aefe.unsqueeze(1) * Rk_origin.unsqueeze(2)).mean(dim=2)
+            #tf_Rk = (pool_tf_aefe.unsqueeze(1) * tf_Rk_origin.unsqueeze(2)).mean(dim=2)
 
             '''
             position_embedding = PositionEmbeddingSine(hidden_dim // 2, normalize=True)
@@ -240,8 +253,10 @@ def train():
             '''
             #kp, desc = model_DETR_kp(Rk, pos)
             #tf_kp, tf_desc = model_DETR_kp(tf_Rk, tf_pos)
-            kp, desc = model_DETR_kp(Rk)
-            tf_kp, tf_desc = model_DETR_kp(tf_Rk)
+            #kp, desc = model_DETR_kp(Rk)
+            #tf_kp, tf_desc = model_DETR_kp(tf_Rk)
+            kp, desc = model_DETR_kp(Rk_origin)
+            tf_kp, tf_desc = model_DETR_kp(tf_Rk_origin)
 
             ##For binary descriptors##
             desc = torch.sign(desc)
@@ -251,14 +266,14 @@ def train():
             tf_desc = MySTE(tf_desc)
 
             ##########################################DECODER##########################################
-            fn_ReconKp = ReconWithKP(Rk.shape[2], Rk.shape[3])
+            fn_ReconKp = ReconWithKP(Rk_origin.shape[2], Rk_origin.shape[3])
             #reconstruction sigma = 0.1, 0.5, 1.0, 3.0, 5,
             #reconstruction sigma = 0.05, 0.1, 0.3, 0.5, 0.7
-            recon_kp_1 = fn_ReconKp(kp, 0.1)
-            recon_kp_2 = fn_ReconKp(kp, 0.5)
-            recon_kp_3 = fn_ReconKp(kp, 1.0)
-            recon_kp_4 = fn_ReconKp(kp, 3.0)
-            recon_kp_5 = fn_ReconKp(kp, 5.0)
+            recon_kp_1 = fn_ReconKp(kp, 0.01)
+            recon_kp_2 = fn_ReconKp(kp, 0.05)
+            recon_kp_3 = fn_ReconKp(kp, 0.1)
+            recon_kp_4 = fn_ReconKp(kp, 0.5)
+            recon_kp_5 = fn_ReconKp(kp, 1.0)
             #print("Decoder: ", time.time() - time4)
 
             kp[:, :, 0] = kp[:, :, 0] * my_width
@@ -273,13 +288,18 @@ def train():
             my_feature = torch.cat([kp, desc], dim=2)
             my_tf_feature = torch.cat([tf_kp, tf_desc], dim=2)
 
-            reconInput_1 = (recon_kp_1.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk_origin
-            reconInput_2 = (recon_kp_2.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk_origin
-            reconInput_3 = (recon_kp_3.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk_origin
-            reconInput_4 = (recon_kp_4.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk_origin
-            reconInput_5 = (recon_kp_5.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk_origin
+            reconInput_1 = (recon_kp_1.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_2 = (recon_kp_2.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_3 = (recon_kp_3.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_4 = (recon_kp_4.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+            reconInput_5 = (recon_kp_5.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1)
+
+            #reconInput_2 = ((recon_kp_2.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1).unsqueeze(2) * Rk_origin.unsqueeze(1)).mean(2)
+            #reconInput_2 = (recon_kp_2.unsqueeze(2) * desc.unsqueeze(3).unsqueeze(4)).mean(1) * Rk_origin
+
 
             reconInput = torch.cat([reconInput_1, reconInput_2, reconInput_3, reconInput_4, reconInput_5], dim=1)
+            #reconInput = reconInput_1
             reconImg = model_StackedHourglassImgRecon(reconInput)
             reconImg = reconImg[:, num_nstack - 1, :, :, :]  # (b,3,192,256)
 
@@ -311,11 +331,11 @@ def train():
             cur_recon_loss_ssim = (1 - criterion(reconImg, aefe_input))
 
             p_sep_loss = 0.5
-            p_kp_loss = 1.0 #1.0
+            p_kp_loss = 10.0 #1.0
             p_desc_loss = 3 * 1e-2
-            p_cost_loss = 1e-4
+            p_cost_loss = 1e-3
             p_cosim_loss = 10.0
-            p_recon_img_l2 = 2.0
+            p_recon_img_l2 = 10.0
             p_recon_img_l1 = 2.0
             p_recon_img_ssim = 1.0
 
@@ -329,23 +349,19 @@ def train():
             my_recon_loss_ssim = p_recon_img_ssim * cur_recon_loss_ssim
 
             #loss = (my_sep_loss + my_fundamental_loss + my_kp_loss + my_desc_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
-            loss = my_sep_loss + my_kp_loss + my_desc_loss + my_cost_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim
+            #loss = my_sep_loss + my_kp_loss + my_desc_loss + my_cost_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim
+            #loss = my_sep_loss + my_recon_loss_ssim
+            loss = my_sep_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim
+
             '''
             if(epoch < 5):
                 print("No Matching Loss")
-                loss = (my_sep_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
+                loss = (my_sep_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
                 #loss = (my_sep_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
             else:
                 print("Computing Matching Loss")
-                loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
-                #loss = (my_sep_loss + my_kp_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
-                #loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
+                loss = my_sep_loss + my_kp_loss + my_desc_loss + my_cost_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim
             '''
-            #loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
-            #loss = (my_sep_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
-            #loss = (my_sep_loss + my_kp_loss + my_desc_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
-            #loss = (my_sep_loss + my_cosim_loss + my_recon_loss_l1 + my_recon_loss_l2 + my_recon_loss_ssim)
-
             #print("Sep Loss: ", '%.4f' % my_sep_loss.item(), ", Fundamental: ", '%.4f' % my_fundamental_loss.item(), ", KP_matching:", '%.4f' % my_kp_loss.item(), ", Desc_matching:", '%.4f' % my_desc_loss.item(), ", Cosim:", '%.4f' % my_cosim_loss.item(), ", Recon_L2:", '%.4f' % my_recon_loss_l2.item(),
             #      ", Recon_SSIM:", '%.4f' % my_recon_loss_ssim.item(), ", Recon_L1:", '%.4f' % my_recon_loss_l1.item())
 
@@ -411,7 +427,7 @@ def train():
 
             'loss': loss,
 
-        }, "/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model.pth")
+        }, "/home/jsk/AEFE_SLAM/SaveModelCKPT/train_model_onlySep.pth")
 
         vis.line(Y=[running_loss], X=np.array([epoch]), win=plot_all, update='append')
 
@@ -451,7 +467,7 @@ if __name__ == '__main__':
     #if not os.path.exists("SaveModelCKPT"):
     #    os.makedirs("SaveModelCKPT")
 
-    print("!!210706!!")
+    print("!!210712!!")
     print("!!!!!This is train_allnew2.py!!!!!")
     train()
 

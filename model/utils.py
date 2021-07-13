@@ -99,7 +99,9 @@ class my_dataset(Dataset):
         #for filename in (sorted(glob.glob('./data/*.jpg'))):
         #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_images/*.jpg'))):
         #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_tmp/*.jpg'))):
-        for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_part/*.jpg'))):
+        #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_part/*.jpg'))):
+        for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_debug/*.jpg'))):
+        #for filename in (sorted(glob.glob('/home/jsk/AEFE_SLAM/dataset/oxbuild_ox/*.jpg'))):
             im = Image.open(filename)
             if(im.height < im.width):
                 img_rsz = cv2.resize(np.array(im), (self.input_width, self.input_height)) #opencv image: (h,w,C), tensor image: (c, h, w)

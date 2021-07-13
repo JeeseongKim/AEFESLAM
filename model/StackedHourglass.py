@@ -112,7 +112,7 @@ class StackedHourglassForKP(torch.nn.Module):
         self.merge_preds = nn.ModuleList([
             Merge(oup_dim, inp_dim) for i in range(nstack - 1)
         ])
-
+        #self.relu = torch.nn.ReLU()
         #self.backbone = resnet50()
         #del self.backbone.fc
 
@@ -131,9 +131,78 @@ class StackedHourglassForKP(torch.nn.Module):
 
         heatmap = torch.stack(combined_hm_preds, 1)[:, self.nstack - 1, :, :, :]
         heatmap = self.pool(heatmap)
-
+        #heatmap = self.relu(heatmap)
         return heatmap
 
+class StackedHourglassForKP_1(torch.nn.Module):
+    def __init__(self, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):
+        super(StackedHourglassForKP_1, self).__init__()
+
+        self.nstack = nstack
+
+        self.pool = Pool(2, 2)
+        self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
+        '''
+        self.pre = nn.Sequential(
+            Residual(3, 3),
+            Residual(3, 128),
+            Pool(2, 2),
+            Residual(128, 128),
+            Conv(128, inp_dim, 7, 2, bn=True, relu=True),
+        )
+        '''
+        self.pre = nn.Sequential(
+            Conv(3, 128, 3, 1, bn=True, relu=True),
+            Pool(2, 2),
+            Residual(128, 128),
+            Pool(2, 2),
+            Residual(128, 128),
+            Residual(128, inp_dim),
+        )
+        self.hgs = nn.ModuleList([
+            nn.Sequential(
+                Hourglass(4, inp_dim, bn, increase),
+                #Hourglass(1, inp_dim, bn, increase),
+            ) for i in range(nstack)])
+
+        self.features = nn.ModuleList([
+            nn.Sequential(
+                Residual(inp_dim, inp_dim),
+                Conv(inp_dim, inp_dim, 1, bn=True, relu=True)
+            ) for i in range(nstack)])
+
+        self.outs = nn.ModuleList([
+            nn.Sequential(
+                Conv(inp_dim, oup_dim, 1, relu=False, bn=False), #256 -> 200
+            )for i in range(nstack)
+         ])
+
+        self.merge_features = nn.ModuleList([
+            Merge(inp_dim, inp_dim) for i in range(nstack - 1)
+        ])
+
+        self.merge_preds = nn.ModuleList([
+            Merge(oup_dim, inp_dim) for i in range(nstack - 1)
+        ])
+        #self.relu = torch.nn.ReLU()
+        #self.backbone = resnet50()
+        #del self.backbone.fc
+
+    def forward(self, imgs):
+        x = imgs #(b,3,w,h)
+        x = self.pre(x) #(b,192,96,128) #(b, 192, 57, 192)
+        combined_hm_preds = []
+        append = combined_hm_preds.append
+        for i in range(self.nstack):
+            hg = self.hgs[i](x)
+            feature = self.features[i](hg)
+            preds = self.outs[i](feature) #--> heatmap prediction
+            append(preds)
+            if (i < self.nstack - 1):
+                x = x + self.merge_preds[i](preds) + self.merge_features[i](feature)
+
+        heatmap = torch.stack(combined_hm_preds, 1)[:, self.nstack - 1, :, :, :]
+        return heatmap
 
 class StackedHourglassImgRecon(nn.Module):
     def __init__(self, num_of_kp, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):

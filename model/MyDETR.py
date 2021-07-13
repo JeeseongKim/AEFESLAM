@@ -550,19 +550,48 @@ class DETR_KPnDesc_only(nn.Module):
         self.transformer = Transformer_only(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, return_intermediate_dec=True)
         self.query_embed = nn.Embedding(num_voters, hidden_dim)
         self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
+        #self.linear_class_kp = MLP(hidden_dim, hidden_dim, 4, 3)
+        #self.linear_class_kp_2 = nn.Linear(4, 2)
+        #self.linear_class_kp = nn.Linear(hidden_dim, 2)
         self.linear_class_desc = nn.Linear(hidden_dim, 256)
-        self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1)
+        #self.input_proj = nn.Conv2d(256, hidden_dim, kernel_size=1)
+        self.input_proj = nn.Conv2d(64, hidden_dim, kernel_size=1)
+        self.relu = torch.nn.ReLU()
 
     def MySigmoid(self, x):
         return torch.exp(x)/(torch.exp(x)+1)
 
     def forward(self, src):
-        hs = self.transformer(src=self.input_proj(src), query_embed=self.query_embed.weight)[0]
+        hs = self.transformer(src=(self.input_proj(src)), query_embed=self.query_embed.weight)[0]
+        #hs = self.transformer(src=src, query_embed=self.query_embed.weight)[0]
+        #myKP = self.linear_class_kp_2(self.linear_class_kp(hs)).sigmoid()
         myKP = self.linear_class_kp(hs).sigmoid()
         myDesc = torch.tanh(self.linear_class_desc(hs))
 
         return myKP[-1], myDesc[-1]
 
+class DETR_KPnDesc_only_nosigmoid(nn.Module):
+    def __init__(self, num_voters, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+        super(DETR_KPnDesc_only_nosigmoid, self).__init__()
+        self.nheads = nheads
+
+        #Transformer
+        self.transformer = Transformer_only(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, return_intermediate_dec=True)
+        self.query_embed = nn.Embedding(num_voters, hidden_dim)
+        self.linear_class_kp = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.linear_class_desc = nn.Linear(hidden_dim, 256)
+        self.input_proj = nn.Conv2d(64, hidden_dim, kernel_size=1)
+        self.relu = torch.nn.ReLU()
+
+    def MySigmoid(self, x):
+        return torch.exp(x)/(torch.exp(x)+1)
+
+    def forward(self, src):
+        hs = self.transformer(src=(self.input_proj(src)), query_embed=self.query_embed.weight)[0]
+        myKP = self.relu(self.linear_class_kp(hs))
+        myDesc = torch.tanh(self.linear_class_desc(hs))
+
+        return myKP[-1], myDesc[-1]
 
 class MHAttentionMap(nn.Module):
     """This is a 2D attention module, which only returns the attention softmax (no multiplication by value)"""
@@ -1284,4 +1313,5 @@ class MLP(nn.Module):
     def forward(self, x):
         for i, layer in enumerate(self.layers):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
+            #x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x

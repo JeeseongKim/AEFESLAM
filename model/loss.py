@@ -49,6 +49,7 @@ class loss_separation(nn.Module):
         #self.sep_loss_output = 2*(1-torch.sigmoid(1e-4*sep_loss))
         #self.sep_loss_output = 4 * torch.sigmoid(1e-6 * sep_loss) * (1 - torch.sigmoid(1e-6 * sep_loss))
         #sep_loss_output = torch.exp(-5*1e-5*sep_loss)
+        #sep_loss_output = torch.exp(-1e-3*sep_loss)
         sep_loss_output = torch.exp(-1e-4*sep_loss)
         #self.sep_loss_output = 4 * torch.sigmoid(1e-9 * sep_loss) * (1 - torch.sigmoid(1e-9 * sep_loss))
 

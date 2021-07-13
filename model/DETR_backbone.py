@@ -114,9 +114,10 @@ def build_backbone(hidden_dim):
 class ResNetBackbone(torch.nn.Module):
     def __init__(self, hidden_dim=256):
         super(ResNetBackbone, self).__init__()
-        self.backbone = resnet50()
+        self.backbone = resnet50(pretrained=False)
         del self.backbone.fc
         self.conv = nn.Conv2d(2048, hidden_dim, 1)
+        self.upsample = torch.nn.Upsample(scale_factor=2, mode='nearest')
 
     def forward(self, imgs):
         x = imgs #(b,3,w,h)
@@ -124,11 +125,13 @@ class ResNetBackbone(torch.nn.Module):
         x = self.backbone.conv1(x)
         x = self.backbone.bn1(x)
         x = self.backbone.relu(x)
-        x = self.backbone.maxpool(x)
+        #x = self.backbone.maxpool(x)
 
         x = self.backbone.layer1(x)
-        x = self.backbone.layer2(x)
+        x = self.upsample(x)
+        x = self.backbone.layer2(x) #(32, 48)
         x = self.backbone.layer3(x)
+        x = self.upsample(x)
         x = self.backbone.layer4(x)
 
         # convert from 2048 to 256 feature planes for the transformer
